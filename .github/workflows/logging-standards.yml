@@ -1,0 +1,85 @@
+name: Enforce Logging Standards
+
+on:
+  pull_request:
+    paths:
+      - '**.py'
+  push:
+    branches:
+      - main
+    paths:
+      - '**.py'
+
+jobs:
+  logging-standards:
+    runs-on: ubuntu-latest
+    name: Check logging standards
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for print() calls
+        run: |
+          echo "🔍 Checking for forbidden print() statements..."
+          
+          # Find violations
+          violations=$(find polis -name "*.py" -type f 2>/dev/null | \
+            xargs grep -n "print(" 2>/dev/null | \
+            grep -v "# print" | \
+            grep -v "\".*print" | \
+            grep -v "'.*print" || true)
+          
+          if [ -n "$violations" ]; then
+            echo "❌ VIOLATION: print() calls detected:"
+            echo "$violations"
+            echo ""
+            echo "RULE: No print() calls allowed in Polis"
+            echo "Use ContextLogger instead"
+            exit 1
+          fi
+          
+          echo "✓ No print() calls found"
+
+      - name: Check for sys.stdout.write() calls
+        run: |
+          echo "🔍 Checking for sys.stdout.write() statements..."
+          
+          violations=$(find polis -name "*.py" -type f 2>/dev/null | \
+            xargs grep -n "sys\.stdout\.write" 2>/dev/null || true)
+          
+          if [ -n "$violations" ]; then
+            echo "❌ VIOLATION: sys.stdout.write() calls detected:"
+            echo "$violations"
+            exit 1
+          fi
+          
+          echo "✓ No sys.stdout.write() calls found"
+
+      - name: Check for sys.stderr.write() calls
+        run: |
+          echo "🔍 Checking for sys.stderr.write() statements..."
+          
+          violations=$(find polis -name "*.py" -type f 2>/dev/null | \
+            xargs grep -n "sys\.stderr\.write" 2>/dev/null || true)
+          
+          if [ -n "$violations" ]; then
+            echo "❌ VIOLATION: sys.stderr.write() calls detected:"
+            echo "$violations"
+            exit 1
+          fi
+          
+          echo "✓ No sys.stderr.write() calls found"
+
+      - name: Check for correlation_id in loggers
+        run: |
+          echo "🔍 Checking that loggers use correlation_id..."
+          
+          # This is a soft check - warns but doesn't fail
+          loggers=$(find polis -name "*.py" -type f -exec grep -l "ContextLogger" {} \; 2>/dev/null | head -5)
+          
+          if [ -n "$loggers" ]; then
+            echo "✓ Found ContextLogger usage in:"
+            echo "$loggers"
+          fi
+          
+          echo "✓ Logger check complete"

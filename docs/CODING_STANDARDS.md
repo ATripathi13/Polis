@@ -160,24 +160,45 @@ service = container.get("event_service")
 
 ## Logging
 
-### JSON Format Only
+### FROZEN RULE: No print() Calls
 
-Every log must be JSON with structured fields:
+**Nobody is allowed to call `print(...)` inside Polis.**
+
+Everything must go through the Logger.
+
+```python
+# ❌ FORBIDDEN
+print("Processing event")
+sys.stdout.write("Done")
+
+# ✅ REQUIRED
+from infrastructure.logging import ContextLogger
+logger = ContextLogger("event", correlation_id="trace-123")
+logger.info("Processing event", operation="append")
+```
+
+### JSON Format (Required Fields)
+
+Every log must contain these fields:
+- **timestamp**: ISO 8601 format
+- **engine**: Component that produced the log
+- **level**: DEBUG, INFO, WARNING, ERROR, CRITICAL
+- **operation**: What operation was performed
+- **correlation_id**: Unique trace ID for distributed tracing
+- **message**: Log message
 
 ```json
 {
   "timestamp": "2026-06-26T10:30:45.123456",
-  "level": "INFO",
   "engine": "event",
+  "level": "INFO",
   "operation": "append",
-  "organization": "org-123",
-  "execution": "exec-456",
-  "message": "Event appended successfully",
-  "extra": {}
+  "correlation_id": "trace-req-123-abc",
+  "message": "Event appended successfully"
 }
 ```
 
-### Using the Logger
+### Using ContextLogger
 
 ```python
 from infrastructure.logging import ContextLogger
@@ -186,6 +207,7 @@ logger = ContextLogger(
     engine="event",
     organization="org-123",
     execution="exec-456",
+    correlation_id="trace-req-789"  # Required for distributed tracing
 )
 
 # Log with operation context
@@ -199,7 +221,15 @@ logger.error("Failed to append", operation="append", error_code="E001")
 
 ```python
 class EventEngine(Engine):
+    def __init__(self, container: Container, correlation_id: str) -> None:
+        super().__init__(
+            name="event",
+            container=container,
+            correlation_id=correlation_id  # Pass through
+        )
+    
     def process(self) -> None:
+        # All required fields automatically included
         self.logger.info(
             "Processing event",
             operation="process",
@@ -207,18 +237,30 @@ class EventEngine(Engine):
         )
 ```
 
-### No Print Statements
-Never use `print()`. Always use the logger:
+### FROZEN RULE: No Print Statements
 
-Bad:
-```python
-print("Event processed")  # ❌ NOT ALLOWED
-```
+**ABSOLUTELY NO `print()` calls are allowed in Polis.**
 
-Good:
 ```python
+# ❌ COMPLETELY FORBIDDEN - Will be caught by:
+#    1. Pre-commit hook
+#    2. GitHub Actions CI
+#    3. Code review
+print("Event processed")
+sys.stdout.write("Done")
+sys.stderr.write("Error")
+
+# ✅ REQUIRED - Always use ContextLogger
 self.logger.info("Event processed", operation="process")
 ```
+
+Enforcement:
+- Pre-commit hook scans for `print(`
+- GitHub Actions CI enforces in all PRs
+- Code review catches any violations
+- Build fails if violations found
+
+See [LOG_FORMAT_REQUIREMENTS.md](./LOG_FORMAT_REQUIREMENTS.md) for detailed enforcement info.
 
 ## Class Design
 

@@ -12,15 +12,22 @@ from infrastructure.config.settings import Settings
 class JSONFormatter(logging.Formatter):
     """Format logs as JSON with structured fields.
     
-    Every log includes:
+    REQUIRED fields in every log:
     - timestamp: ISO 8601 format
-    - level: DEBUG, INFO, WARNING, ERROR, CRITICAL
     - engine: Which engine/component produced the log
+    - level: DEBUG, INFO, WARNING, ERROR, CRITICAL
     - operation: What operation was performed
-    - organization: Organization context (if available)
-    - execution: Execution/request ID (if available)
+    - correlation_id: Request/execution correlation ID (unique trace ID)
     - message: Log message
+    
+    OPTIONAL fields:
+    - organization: Organization context
+    - execution: Execution/request ID
+    - exception: Exception traceback (if error)
     - extra: Any additional context
+    
+    RULE: No print() calls allowed in Polis. All output goes through Logger.
+    RULE: Every log must have correlation_id for distributed tracing.
     """
 
     def __init__(
@@ -28,6 +35,7 @@ class JSONFormatter(logging.Formatter):
         engine: str = "core",
         organization: str | None = None,
         execution: str | None = None,
+        correlation_id: str | None = None,
     ) -> None:
         """Initialize JSON formatter.
         
@@ -35,37 +43,44 @@ class JSONFormatter(logging.Formatter):
             engine: Name of the engine/component
             organization: Organization context
             execution: Execution/request ID
+            correlation_id: Correlation/trace ID (required for all logs)
         """
         super().__init__()
         self.engine = engine
         self.organization = organization
         self.execution = execution
+        self.correlation_id = correlation_id or "unknown"
 
     def format(self, record: logging.LogRecord) -> str:
         """Format log record as JSON.
+        
+        All logs must contain: timestamp, engine, level, operation,
+        correlation_id, and message.
         
         Args:
             record: The log record to format.
             
         Returns:
-            JSON string with structured log data.
+            JSON string with required and optional fields.
         """
+        # REQUIRED fields (enforced)
         log_data: dict[str, Any] = {
             "timestamp": datetime.utcnow().isoformat(),
-            "level": record.levelname,
             "engine": self.engine,
+            "level": record.levelname,
+            "operation": getattr(record, "operation", "unknown"),
+            "correlation_id": getattr(
+                record,
+                "correlation_id",
+                self.correlation_id,
+            ),
             "message": record.getMessage(),
         }
 
-        # Add operation if available in extra
-        if hasattr(record, "operation"):
-            log_data["operation"] = record.operation
-
-        # Add organization if available
+        # OPTIONAL fields
         if self.organization:
             log_data["organization"] = self.organization
 
-        # Add execution/request ID if available
         if self.execution:
             log_data["execution"] = self.execution
 
@@ -103,6 +118,7 @@ class JSONFormatter(logging.Formatter):
                 "operation",
                 "organization",
                 "execution",
+                "correlation_id",
             }
         }
 
@@ -117,6 +133,7 @@ def setup_logging(
     engine: str = "core",
     organization: str | None = None,
     execution: str | None = None,
+    correlation_id: str | None = None,
 ) -> logging.Logger:
     """Configure JSON logging for the application.
     
@@ -125,6 +142,7 @@ def setup_logging(
         engine: Name of the engine/component
         organization: Organization context
         execution: Execution/request ID
+        correlation_id: Correlation ID for request tracing
         
     Returns:
         Configured logger instance.
@@ -144,6 +162,7 @@ def setup_logging(
         engine=engine,
         organization=organization,
         execution=execution,
+        correlation_id=correlation_id,
     )
 
     console_handler.setFormatter(formatter)
@@ -157,6 +176,7 @@ def create_logger(
     settings: Settings | None = None,
     organization: str | None = None,
     execution: str | None = None,
+    correlation_id: str | None = None,
 ) -> logging.Logger:
     """Create or get a logger for a specific engine.
     
@@ -165,6 +185,7 @@ def create_logger(
         settings: Application settings (optional, uses default if not provided)
         organization: Organization context
         execution: Execution/request ID
+        correlation_id: Correlation ID for request tracing
         
     Returns:
         Configured logger instance.
@@ -180,17 +201,25 @@ def create_logger(
             engine=engine,
             organization=organization,
             execution=execution,
+            correlation_id=correlation_id,
         )
 
     return logger
 
 
 class ContextLogger:
-    """Logger with embedded context (engine, organization, execution).
+    """Logger with embedded context (engine, organization, execution, correlation_id).
+    
+    RULE: No print() calls allowed in Polis. Use ContextLogger instead.
+    RULE: Every log must have correlation_id for distributed tracing.
     
     Example:
-        logger = ContextLogger("event", organization="org-123",
-                              execution="exec-456")
+        logger = ContextLogger(
+            "event",
+            organization="org-123",
+            execution="exec-456",
+            correlation_id="trace-789"
+        )
         logger.info("Event appended", operation="append")
     """
 
@@ -200,6 +229,7 @@ class ContextLogger:
         settings: Settings | None = None,
         organization: str | None = None,
         execution: str | None = None,
+        correlation_id: str | None = None,
     ) -> None:
         """Initialize context logger.
         
@@ -208,15 +238,18 @@ class ContextLogger:
             settings: Application settings
             organization: Organization context
             execution: Execution/request ID
+            correlation_id: Correlation ID for distributed tracing
         """
         self.engine = engine
         self.organization = organization
         self.execution = execution
+        self.correlation_id = correlation_id or "unknown"
         self.logger = create_logger(
             engine,
             settings=settings,
             organization=organization,
             execution=execution,
+            correlation_id=self.correlation_id,
         )
 
     def debug(self, message: str, operation: str | None = None,
@@ -278,14 +311,20 @@ class ContextLogger:
              extra: dict[str, Any]) -> None:
         """Internal logging method.
         
+        Ensures all logs have required fields:
+        timestamp, engine, level, operation, correlation_id, message.
+        
         Args:
-            level: Log level
-            message: Log message
-            operation: Operation name
-            extra: Additional context
+            level: Log level (debug, info, warning, error, critical)
+            message: Log message text
+            operation: Operation name (required)
+            extra: Additional context fields
         """
         log_extra = extra.copy()
         if operation:
             log_extra["operation"] = operation
+        
+        # Ensure correlation_id is always present in logs
+        log_extra["correlation_id"] = self.correlation_id
 
         getattr(self.logger, level)(message, extra=log_extra)

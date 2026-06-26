@@ -2,6 +2,21 @@
 
 Autonomous agent platform with modular engines and strict coding standards.
 
+---
+
+## ⚠️ FROZEN RULES
+
+**These rules are NON-NEGOTIABLE and enforced at all levels:**
+
+1. **No `print()` calls** - Everything goes through `Logger`
+2. **Every log has required fields** - `Timestamp`, `Engine`, `Level`, `Operation`, `Correlation ID`, `Message`
+
+See [FROZEN_RULES.md](FROZEN_RULES.md) for complete details and enforcement.
+
+Pre-commit hooks + GitHub Actions will prevent violations.
+
+---
+
 ## Quick Start
 
 ### Using Docker (Recommended)

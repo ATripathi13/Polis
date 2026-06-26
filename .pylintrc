@@ -1,0 +1,61 @@
+[MASTER]
+# Python version to target
+py-version = 3.10
+
+# Maximum number of characters on a single line
+max-line-length = 100
+
+# Minimum version required
+min-similarity-lines = 4
+
+[MESSAGES CONTROL]
+# Disable specific messages
+disable =
+    # Naming conventions
+    invalid-name,
+    # Documentation
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    # Complexity
+    too-many-arguments,
+    too-many-branches,
+    too-few-public-methods,
+    # Line too long (handled by black)
+    line-too-long,
+    # String quotes (handled by black)
+    wrong-import-order,
+
+[FORMAT]
+# Maximum number of characters that should be written on a single line
+max-line-length = 100
+
+# String quote preference
+string-quote = single-quotes
+
+[DESIGN]
+# Maximum number of locals for function / method body
+max-locals = 15
+
+# Maximum number of attributes for class
+max-attributes = 7
+
+[VARIABLES]
+# List of additional names supposed to be defined in builtins
+additional-builtins = _
+
+[PYLINT]
+# Enforce max line length
+[TYPECHECKING]
+# Ignore imports used for type checking
+ignored-modules = typing_extensions
+
+[REPORTING]
+# Output format
+output-format = parseable
+
+# Reports which are usually copied and pasted off the internet to please your computer
+# reports = no
+
+# Set the output format used when reporting messages
+msg-template = '{path}:{line}:{column}: {msg_id}({symbol}) {msg}'
