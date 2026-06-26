@@ -1,0 +1,29 @@
+# Core dependencies
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.6.0
+pydantic-settings>=2.2.0
+python-dotenv>=1.0.0
+
+# Database
+sqlalchemy>=2.0.0
+alembic>=1.12.0
+psycopg>=3.1.0
+
+# Logging & JSON
+structlog>=24.1.0
+
+# Dependency injection (alternative/supplementary)
+dependency-injector>=4.41.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+httpx>=0.25.0
+
+# Development tools
+black>=23.12.0
+mypy>=1.7.0
+pylint>=3.0.0
+isort>=5.12.0
