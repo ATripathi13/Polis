@@ -14,7 +14,7 @@ sys.stdout.write("Something")
 sys.stderr.write("Error")
 
 # ✅ DO THIS INSTEAD:
-from infrastructure.logging import ContextLogger
+from src.infrastructure.logging import ContextLogger
 
 logger = ContextLogger(
     engine="my_component",
@@ -66,7 +66,7 @@ logger.info("Event processed", operation="append_event")
 # ENGINE EXAMPLE - Full Compliance
 # ============================================================================
 
-from infrastructure.config import Engine, Container
+from src.infrastructure.config import Engine, Container
 
 class EventEngine(Engine):
     def __init__(
@@ -108,7 +108,7 @@ class EventEngine(Engine):
 # ============================================================================
 
 from fastapi import FastAPI
-from infrastructure import ApplicationContainer
+from src.infrastructure import ApplicationContainer
 
 app = FastAPI()
 container: ApplicationContainer | None = None
