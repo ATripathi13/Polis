@@ -25,7 +25,9 @@ from engines.communication.domain.value_objects import (
     CommunicationIdentity,
     Content,
 )
-
+from engines.communication.domain.value_objects import (
+    Mention,
+)
 
 def create_test_event() -> CommunicationEvent:
     """
@@ -177,3 +179,50 @@ def test_invalid_transition():
 
     with pytest.raises(ValueError):
         event.mark_persisted()
+
+def test_is_addressed_to():
+
+    event = create_test_event()
+
+    event.mentions.append(
+        Mention(
+            identity=CommunicationIdentity(
+                internal_id="POLIS",
+            ),
+            display_name="Polis",
+        )
+    )
+
+    assert event.is_addressed_to("POLIS")
+
+    assert not event.is_addressed_to("OTHER")
+
+def test_detect_question_mark():
+
+    event = create_test_event()
+
+    event.content = Content(
+        body="What database do we use?",
+    )
+
+    assert event.is_question()
+
+def test_detect_question_without_question_mark():
+
+    event = create_test_event()
+
+    event.content = Content(
+        body="Summarize today's decisions",
+    )
+
+    assert event.is_question()
+
+def test_detect_normal_statement():
+
+    event = create_test_event()
+
+    event.content = Content(
+        body="We migrated to PostgreSQL.",
+    )
+
+    assert not event.is_question()

@@ -4,6 +4,7 @@ from .channel import Channel
 from .content import Content
 from .attachment import Attachment
 from .message_reference import MessageReference
+from .mention import Mention
 
 __all__ = [
     "CommunicationIdentity",
@@ -12,4 +13,5 @@ __all__ = [
     "Content",
     "Attachment",
     "MessageReference",
+    "Mention",
 ]

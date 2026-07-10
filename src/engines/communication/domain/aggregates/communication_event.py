@@ -25,7 +25,9 @@ from engines.communication.domain.value_objects.message_reference import (
 from engines.communication.domain.events import (
     CommunicationCreatedEvent,
 )
-
+from engines.communication.domain.value_objects.mention import (
+    Mention,
+)
 
 @dataclass(slots=True, kw_only=True)
 class CommunicationEvent(AggregateRoot):
@@ -50,6 +52,8 @@ class CommunicationEvent(AggregateRoot):
     attachments: list[Attachment] = field(default_factory=list)
 
     references: list[MessageReference] = field(default_factory=list)
+
+    mentions: list[Mention] = field(default_factory=list,)
 
     _ALLOWED_TRANSITIONS: ClassVar[dict] = {
         ProcessingStatus.RECEIVED: {
@@ -144,3 +148,56 @@ class CommunicationEvent(AggregateRoot):
 
     def mark_failed(self) -> None:
         self.status = ProcessingStatus.FAILED
+
+    def is_addressed_to(
+        self,
+        internal_id: str,
+    ) -> bool:
+        """
+        Returns True if this communication explicitly
+        mentions the given identity.
+        """
+
+        return any(
+            mention.identity.internal_id == internal_id
+            for mention in self.mentions
+        )
+    def is_question(self) -> bool:
+        """
+        Returns True if the communication appears
+        to be asking a question.
+        """
+
+        text = self.content.body.strip().lower()
+
+        if not text:
+            return False
+
+        if text.endswith("?"):
+            return True
+
+        question_starters = (
+            "what",
+            "why",
+            "who",
+            "where",
+            "when",
+            "which",
+            "how",
+            "can",
+            "could",
+            "would",
+            "should",
+            "is",
+            "are",
+            "do",
+            "does",
+            "did",
+            "tell me",
+            "show me",
+            "list",
+            "summarize",
+            "explain",
+        )
+
+        return text.startswith(question_starters)

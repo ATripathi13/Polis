@@ -1,15 +1,15 @@
 """
-Rule-based reasoning engine for POLIS.
+Rule-based reasoning engine.
 """
 
 from __future__ import annotations
 
-from engines.communication.domain.aggregates import (
-    CommunicationEvent,
-)
-
 from domain.reasoning.enums import (
     ReasoningAction,
+)
+
+from domain.reasoning.registry import (
+    ReasoningPolicyRegistry,
 )
 
 from domain.reasoning.services import (
@@ -17,6 +17,7 @@ from domain.reasoning.services import (
 )
 
 from domain.reasoning.value_objects import (
+    ReasoningContext,
     ReasoningDecision,
 )
 
@@ -25,19 +26,34 @@ class RuleBasedReasoningService(
     ReasoningService,
 ):
     """
-    First implementation of the organizational
-    reasoning engine.
+    Executes reasoning policies in order.
     """
 
+    def __init__(
+        self,
+        registry: ReasoningPolicyRegistry,
+    ) -> None:
+        self._registry = registry
     def reason(
         self,
-        communication: CommunicationEvent,
+        communication,
     ) -> ReasoningDecision:
 
-        text = communication.content.body.lower()
+        context = ReasoningContext(
+            communication=communication,
+        )
+
+        for policy in self._registry.policies:
+
+            decision = policy.evaluate(
+                context,
+            )
+
+            if decision is not None:
+                return decision
 
         return ReasoningDecision(
             action=ReasoningAction.IGNORE,
             confidence=1.0,
-            reason="No organizational action required.",
+            reason="No reasoning policy matched.",
         )
