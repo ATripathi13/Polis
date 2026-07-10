@@ -78,6 +78,16 @@ class Settings(BaseSettings):
 
     jwt_secret: str = Field(alias="JWT_SECRET")
 
+    SLACK_CLIENT_ID: str = ""
+
+    SLACK_CLIENT_SECRET: str = ""
+
+    SLACK_SIGNING_SECRET: str = ""
+
+    SLACK_BOT_TOKEN: str = ""
+
+    SLACK_APP_TOKEN: str = ""
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

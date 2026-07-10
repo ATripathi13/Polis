@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class DomainEvent(ABC):
     """
     Base class for all domain events.
