@@ -7,7 +7,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from domain.observation import (
-    ObservationBundle,
+    Observation,
 )
 
 from domain.organization.value_objects import (
@@ -24,7 +24,7 @@ class OrganizationEventBuilder(ABC):
     @abstractmethod
     def build(
         self,
-        bundle: ObservationBundle,
+        observations: list[Observation],
     ) -> list[OrganizationEvent]:
         """
         Build organizational events.
