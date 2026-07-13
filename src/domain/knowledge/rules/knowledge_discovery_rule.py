@@ -24,7 +24,28 @@ class KnowledgeDiscoveryRule(
     Converts knowledge discovery events
     into knowledge candidates.
     """
+    def _subject_from_summary(
+        self,
+        summary: str,
+    ) -> KnowledgeSubject:
+        """
+        Infer a canonical subject from
+        a knowledge statement.
+        """
 
+        normalized = summary.lower()
+
+        if "postgresql" in normalized:
+            return KnowledgeSubject(
+                kind="technology",
+                identifier="database",
+            )
+
+        return KnowledgeSubject(
+            kind="general",
+            identifier=normalized,
+        )
+    
     def build(
         self,
         event: OrganizationEvent,
@@ -37,9 +58,8 @@ class KnowledgeDiscoveryRule(
             return []
 
         candidate = KnowledgeCandidate(
-            subject=KnowledgeSubject(
-                kind="general",
-                identifier=event.summary.lower(),
+            subject=self._subject_from_summary(
+                event.summary,
             ),
             summary=event.summary,
             supporting_events=[event],

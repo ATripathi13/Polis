@@ -52,12 +52,14 @@ class PolisPipeline:
                 communication,
             )
         )
+        print("OBSERVATIONS:", observations)
 
         organization_events = (
             self._organization_builder.build(
                 observations,
             )
         )
+        print("ORG EVENTS:", organization_events)
 
         # Step 3
         validated = []
@@ -69,7 +71,7 @@ class PolisPipeline:
                     event,
                 )
             )
-
+            print("CANDIDATES:", candidates)
             for candidate in candidates:
 
                 result = (
@@ -79,5 +81,6 @@ class PolisPipeline:
                 )
 
                 validated.append(result)
+            print("VALIDATED:", result)                
 
         return validated

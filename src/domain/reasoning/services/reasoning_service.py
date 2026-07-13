@@ -12,8 +12,9 @@ from engines.communication.domain.aggregates import (
 
 from domain.reasoning.value_objects import (
     ReasoningDecision,
+    Answer,
+    Question,
 )
-
 
 class ReasoningService(ABC):
     """
@@ -30,5 +31,20 @@ class ReasoningService(ABC):
     ) -> ReasoningDecision:
         """
         Determine what Polis should do.
+        """
+        raise NotImplementedError
+    
+    """
+    Base interface for answering
+    organizational questions.
+    """
+
+    def answer(
+        self,
+        question: Question,
+    ) -> Answer:
+        """
+        Answer a question using
+        organizational knowledge.
         """
         raise NotImplementedError
