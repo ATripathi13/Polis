@@ -8,7 +8,9 @@ from domain.reasoning import (
     Question,
     SimpleReasoningService,
 )
-
+from domain.reasoning.rankers.keyword_ranker import (
+    KeywordRanker,
+)
 
 def test_answer_question_from_repository():
 
@@ -25,7 +27,8 @@ def test_answer_question_from_repository():
     )
 
     service = SimpleReasoningService(
-        repository,
+        repository=repository,
+        ranker=KeywordRanker(),
     )
 
     answer = service.answer(

@@ -14,8 +14,9 @@ class PolisPipeline:
         organization_builder,
         knowledge_builder,
         knowledge_validator,
+        knowledge_acceptance_service,   # <-- NEW
         reasoning_service,
-    ) -> None:
+    ):
 
         self._communication_service = communication_service
 
@@ -38,7 +39,7 @@ class PolisPipeline:
         self._reasoning_service = (
             reasoning_service
         )
-
+        self._knowledge_acceptance_service = knowledge_acceptance_service
     def process(
         self,
         communication,
@@ -81,6 +82,9 @@ class PolisPipeline:
                 )
 
                 validated.append(result)
+
+                if result.status.is_accepted():
+                    self._knowledge_acceptance_service.accept(result)
             print("VALIDATED:", result)                
 
         return validated

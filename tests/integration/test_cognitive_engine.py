@@ -50,7 +50,9 @@ from engines.communication.domain.value_objects import (
     Content,
 )
 
-
+from domain.reasoning.rankers.keyword_ranker import (
+    KeywordRanker,
+)
 def test_cognitive_engine():
 
     repository = InMemoryKnowledgeRepository()
@@ -107,7 +109,8 @@ def test_cognitive_engine():
     )
 
     reasoning = SimpleReasoningService(
-        repository,
+        repository=repository,
+        ranker=KeywordRanker(),
     )
 
     engine = SimpleCognitiveEngine(

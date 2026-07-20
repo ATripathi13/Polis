@@ -23,6 +23,9 @@ from .validation_result import (
 from .validation_status import (
     ValidationStatus,
 )
+from engines.knowledge.domain.indexing import (
+    KnowledgeIndexer,
+)
 
 
 class SimpleKnowledgeValidator(
@@ -40,9 +43,11 @@ class SimpleKnowledgeValidator(
     def __init__(
         self,
         repository: KnowledgeRepository,
+        indexer: KnowledgeIndexer,
     ) -> None:
 
         self._repository = repository
+        self._indexer = indexer
 
     def validate(
         self,

@@ -15,6 +15,7 @@ from .validation_status import (
 )
 
 
+
 @dataclass(frozen=True, slots=True)
 class ValidationResult:
     """

@@ -15,7 +15,9 @@ from infrastructure.config.constants import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+data = Path(".env").read_bytes()
 
+env_file = PROJECT_ROOT / ".env"
 
 class Settings(BaseSettings):
     """
@@ -27,7 +29,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",
-        case_sensitive=True,
+        case_sensitive=False,
         extra="ignore",
     )
 
@@ -44,7 +46,7 @@ class Settings(BaseSettings):
     # PostgreSQL
     # ==========================================================
 
-    postgres_host: str = Field(alias="POSTGRES_HOST")
+    postgres_host: str = Field(validation_alias="POSTGRES_HOST")
     postgres_port: int = Field(alias="POSTGRES_PORT")
     postgres_db: str = Field(alias="POSTGRES_DB")
     postgres_user: str = Field(alias="POSTGRES_USER")
@@ -76,22 +78,23 @@ class Settings(BaseSettings):
     # Security
     # ==========================================================
 
-    jwt_secret: str = Field(alias="JWT_SECRET")
+    slack_client_id: str = Field(alias="SLACK_CLIENT_ID")
 
-    SLACK_CLIENT_ID: str = ""
+    slack_client_secret: str = Field(alias="SLACK_CLIENT_SECRET")
 
-    SLACK_CLIENT_SECRET: str = ""
+    slack_signing_secret: str = Field(alias="SLACK_SIGNING_SECRET")
 
-    SLACK_SIGNING_SECRET: str = ""
+    slack_bot_token: str = Field(alias="SLACK_BOT_TOKEN")
 
-    SLACK_BOT_TOKEN: str = ""
+    slack_app_token: str = Field(alias="SLACK_APP_TOKEN")
 
-    SLACK_APP_TOKEN: str = ""
-
+    slack_bot_user_id: str = Field(alias="SLACK_BOT_USER_ID")
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """
-    Return the singleton Settings instance.
-    """
-    return Settings()
+
+
+    settings = Settings()
+
+
+    return settings

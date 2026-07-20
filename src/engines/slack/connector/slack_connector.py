@@ -23,7 +23,7 @@ from engines.slack.parser import (
 from interfaces.api.models import (
     SlackEventRequest,
 )
-
+from infrastructure.config.settings import get_settings
 class SlackConnector:
     """
     Receives Slack events and forwards
@@ -33,10 +33,15 @@ class SlackConnector:
         self,
         engine: CognitiveEngine,
         mapper: CommunicationMapper,
+        settings: get_settings,
     ) -> None:
 
         self._engine = engine
         self._mapper = mapper
+        self._settings = settings
+
+    settings = get_settings()
+
     def receive(
         self,
         message: SlackMessage,
@@ -47,6 +52,11 @@ class SlackConnector:
         # message = self._parser.parse(
         #     payload,
         # )
+        print(f"[SLACK] Incoming user : {message.user!r}")
+        print(f"[SLACK] Bot user      : {self._settings.slack_bot_user_id!r}")
+        print(f"[SLACK] Equal?        : {message.user == self._settings.slack_bot_user_id}")
+        if message.user == self._settings.slack_bot_user_id:
+            return
         communication = (
             self._mapper.to_communication(
                 message,

@@ -38,7 +38,12 @@ from domain.organization import (
 from domain.reasoning import (
     SimpleReasoningService,
 )
-
+from domain.reasoning.rankers import (
+    KeywordRanker,
+)
+from engines.knowledge.infrastructure.indexing import (
+    NullKnowledgeIndexer,
+)
 def bootstrap(
 ) -> ApplicationContainer:
     """
@@ -46,8 +51,12 @@ def bootstrap(
     application.
     """
     repository = InMemoryKnowledgeRepository()
+
+    indexer = NullKnowledgeIndexer()
+
     validator = SimpleKnowledgeValidator(
-        repository,
+        repository=repository,
+        indexer=indexer,
     )
     observation_registry = ObservationRuleRegistry()
 
@@ -92,8 +101,11 @@ def bootstrap(
         knowledge_validator=validator,
         reasoning_service=None,
     )
+    
     reasoning = SimpleReasoningService(
-        repository,
+        repository, 
+        ranker = KeywordRanker()
     )
+
     engine = SimpleCognitiveEngine(pipeline,reasoning,)
     return ApplicationContainer(engine=engine,repository=repository,)

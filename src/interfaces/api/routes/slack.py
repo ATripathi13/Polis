@@ -30,13 +30,19 @@ from engines.slack.mapper import (
 from engines.slack.parser import (
     SlackEventParser,
 )
-
-router = APIRouter(
-    prefix="/slack",
-    tags=["Slack"],
-    
-    
+from engines.slack.services import (
+    SlackClient,
+    SlackResponder,
 )
+
+from engines.slack.router import (
+    SlackIntentRouter,
+)
+from infrastructure.config.settings import get_settings
+router = APIRouter(
+    prefix="/connectors/slack",
+    tags=["Slack"],
+)   
 @router.post(
     "/events",
 )
@@ -50,7 +56,13 @@ async def receive_event(
     parser = SlackEventParser()
     message = parser.parse(payload,)
     print(message)
-    connector = SlackConnector(engine,CommunicationMapper(),)
-    connector.receive(message,)
-
+    connector = SlackConnector(engine,CommunicationMapper(),get_settings(),)
+    client = SlackClient()
+    responder = SlackResponder(client,)
+    intent_router = SlackIntentRouter(
+        engine=engine,
+        responder=responder,
+        connector=connector,
+    )
+    intent_router.handle(message,)
     return {"status": "accepted",}

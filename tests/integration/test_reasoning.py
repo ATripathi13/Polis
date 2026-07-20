@@ -9,6 +9,9 @@ from domain.reasoning import (
     SimpleReasoningService,
 )
 
+from domain.reasoning.rankers.keyword_ranker import (
+    KeywordRanker,
+)
 
 def test_reasoning_from_memory():
 
@@ -25,7 +28,8 @@ def test_reasoning_from_memory():
     )
 
     reasoning = SimpleReasoningService(
-        repository,
+        repository=repository,
+        ranker=KeywordRanker(),
     )
 
     answer = reasoning.answer(
