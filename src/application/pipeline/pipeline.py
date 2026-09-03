@@ -3,7 +3,7 @@ POLIS cognitive execution pipeline.
 """
 
 from __future__ import annotations
-
+from domain.knowledge.validators import ValidationStatus
 
 class PolisPipeline:
 
@@ -83,7 +83,10 @@ class PolisPipeline:
 
                 validated.append(result)
 
-                if result.status.is_accepted():
+                if result.status in (
+                    ValidationStatus.ACCEPTED,
+                    ValidationStatus.UPDATED,
+                ):
                     self._knowledge_acceptance_service.accept(result)
             print("VALIDATED:", result)                
 

@@ -1,3 +1,16 @@
-from __future__ import annotations
+from .connection import (
+    Base,
+    SessionLocal,
+    engine,
+)
 
-__all__ = []
+from .knowledge_repository import (
+    PostgreSQLKnowledgeRepository,
+)
+
+__all__ = [
+    "Base",
+    "SessionLocal",
+    "engine",
+    "PostgreSQLKnowledgeRepository",
+]

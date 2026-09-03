@@ -4,7 +4,11 @@ Dependency providers.
 
 from __future__ import annotations
 
+from application.bootstrap.bootstrap import bootstrap
+from application.cognitive import CognitiveEngine
+
 from connectors.slack.normalizers import SlackNormalizer
+from connectors.slack.services import SlackService
 
 from engines.communication.application.services import (
     CommunicationService,
@@ -13,7 +17,6 @@ from engines.communication.application.services import (
 from engines.communication.infrastructure.repositories import (
     InMemoryCommunicationRepository,
 )
-from connectors.slack.services import SlackService
 
 from domain.events import (
     EventDispatcher,
@@ -29,11 +32,21 @@ from engines.communication.domain.events import (
 )
 
 
-# Repository
+# ==========================================================
+# POLIS APPLICATION
+# ==========================================================
+
+_application = bootstrap()
+
+_cognitive_engine = _application.engine
+
+
+# ==========================================================
+# COMMUNICATION INFRASTRUCTURE
+# ==========================================================
+
 _repository = InMemoryCommunicationRepository()
 
-
-# Event Infrastructure
 _registry = EventRegistry()
 
 _registry.register(
@@ -46,23 +59,34 @@ _dispatcher = EventDispatcher(
 )
 
 
-# Application Service
+# ==========================================================
+# COMMUNICATION SERVICE
+# ==========================================================
+
 _service = CommunicationService(
     repository=_repository,
     dispatcher=_dispatcher,
 )
 
 
-# Slack Components
+# ==========================================================
+# SLACK
+# ==========================================================
+
 _normalizer = SlackNormalizer()
 
 _slack_service = SlackService(
     normalizer=_normalizer,
     communication_service=_service,
+    cognitive_engine=_cognitive_engine,
 )
 
 
-def get_repository() -> InMemoryCommunicationRepository:
+# ==========================================================
+# DEPENDENCIES
+# ==========================================================
+
+def get_repository():
     return _repository
 
 
@@ -77,3 +101,6 @@ def get_slack_normalizer() -> SlackNormalizer:
 def get_slack_service() -> SlackService:
     return _slack_service
 
+
+def get_cognitive_engine() -> CognitiveEngine:
+    return _cognitive_engine

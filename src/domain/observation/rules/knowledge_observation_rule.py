@@ -25,18 +25,21 @@ class KnowledgeObservationRule(
     ObservationRule,
 ):
     """
-    Detects organizational knowledge statements.
+    Detects organizational knowledge using
+    semantic understanding.
+
+    The rule itself does not contain hardcoded
+    phrases for identifying knowledge.
     """
 
-    _PATTERNS = (
-        "we use",
-        "we have",
-        "we deploy",
-        "we run",
-        "we store",
-        "our ",
-        "the company",
-    )
+    def __init__(
+        self,
+        knowledge_understanding,
+    ) -> None:
+
+        self._knowledge_understanding = (
+            knowledge_understanding
+        )
 
     @property
     def priority(self) -> int:
@@ -52,19 +55,30 @@ class KnowledgeObservationRule(
         if not text:
             return []
 
-        normalized = text.lower()
+        result = self._knowledge_understanding.analyze(
+            text,
+        )
 
-        if not any(
-            normalized.startswith(pattern)
-            for pattern in self._PATTERNS
-        ):
+        if not result.get("is_knowledge", False):
             return []
+
+        summary = result.get(
+            "summary",
+            text,
+        )
+
+        confidence = float(
+            result.get(
+                "confidence",
+                0.0,
+            )
+        )
 
         return [
             Observation(
                 observation_type=ObservationType.KNOWLEDGE,
-                summary=text,
-                confidence=1.0,
+                summary=summary,
+                confidence=confidence,
                 evidence=[
                     communication.source_event_id,
                 ],

@@ -4,6 +4,14 @@ Application bootstrap.
 
 from __future__ import annotations
 
+from infrastructure.llm import (
+    OpenRouterClient,
+)
+
+from infrastructure.llm.knowledge_understanding import (
+    LLMKnowledgeUnderstanding,
+)
+
 from application.cognitive import (
     SimpleCognitiveEngine,
 )
@@ -14,13 +22,19 @@ from .container import (
 from application.pipeline.pipeline import (
     PolisPipeline,
 )
+from application.services.knowledge_acceptance_service import (
+    KnowledgeAcceptanceService,
+)
 
 from domain.knowledge import (
-    InMemoryKnowledgeRepository,
     KnowledgeDiscoveryRule,
     KnowledgeRuleRegistry,
     RuleBasedKnowledgeBuilder,
     SimpleKnowledgeValidator,
+)
+
+from infrastructure.database import (
+    PostgreSQLKnowledgeRepository,
 )
 
 from domain.observation import (
@@ -50,7 +64,7 @@ def bootstrap(
     Assemble the complete POLIS
     application.
     """
-    repository = InMemoryKnowledgeRepository()
+    repository = PostgreSQLKnowledgeRepository()
 
     indexer = NullKnowledgeIndexer()
 
@@ -58,12 +72,25 @@ def bootstrap(
         repository=repository,
         indexer=indexer,
     )
+
+    knowledge_acceptance_service = KnowledgeAcceptanceService(
+        repository=repository,
+    )
+
+    llm_client = OpenRouterClient()
+
+    knowledge_understanding = (
+        LLMKnowledgeUnderstanding(
+            llm_client,
+        )
+    )
     observation_registry = ObservationRuleRegistry()
 
     observation_registry.register(
-        KnowledgeObservationRule(),
+        KnowledgeObservationRule(
+            knowledge_understanding,
+        ),
     )
-
     observation_extractor = (
         RuleBasedObservationExtractor(
             observation_registry,
@@ -93,19 +120,28 @@ def bootstrap(
             knowledge_registry,
         )
     )
+    
+    reasoning = SimpleReasoningService(
+        repository,
+        ranker=KeywordRanker(),
+    )
+
     pipeline = PolisPipeline(
         communication_service=None,
         observation_extractor=observation_extractor,
         organization_builder=organization_builder,
         knowledge_builder=knowledge_builder,
         knowledge_validator=validator,
-        reasoning_service=None,
-    )
-    
-    reasoning = SimpleReasoningService(
-        repository, 
-        ranker = KeywordRanker()
+        knowledge_acceptance_service=knowledge_acceptance_service,
+        reasoning_service=reasoning,
     )
 
-    engine = SimpleCognitiveEngine(pipeline,reasoning,)
-    return ApplicationContainer(engine=engine,repository=repository,)
+    engine = SimpleCognitiveEngine(
+        pipeline,
+        reasoning,
+    )
+
+    return ApplicationContainer(
+        engine=engine,
+        repository=repository,
+    )

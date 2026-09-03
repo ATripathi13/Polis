@@ -15,7 +15,7 @@ from infrastructure.config.constants import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-data = Path(".env").read_bytes()
+
 
 env_file = PROJECT_ROOT / ".env"
 
@@ -89,6 +89,21 @@ class Settings(BaseSettings):
     slack_app_token: str = Field(alias="SLACK_APP_TOKEN")
 
     slack_bot_user_id: str = Field(alias="SLACK_BOT_USER_ID")
+    # ==========================================================
+    # LLM / OpenRouter
+    # ==========================================================
+
+    openrouter_api_key: str = Field(alias="OPENROUTER_API_KEY")
+
+    openrouter_model: str = Field(
+        default="openrouter/free",
+        alias="OPENROUTER_MODEL",
+    )
+
+    openrouter_base_url: str = Field(
+        default="https://openrouter.ai/api/v1",
+        alias="OPENROUTER_BASE_URL",
+    )
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
