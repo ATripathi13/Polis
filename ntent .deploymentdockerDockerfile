@@ -1,0 +1,97 @@
+[1mdiff --git a/src/api/dependencies.py b/src/api/dependencies.py[m
+[1mindex 3971b08..e93e550 100644[m
+[1m--- a/src/api/dependencies.py[m
+[1m+++ b/src/api/dependencies.py[m
+[36m@@ -4,15 +4,26 @@[m [mDependency providers.[m
+ [m
+ from __future__ import annotations[m
+ [m
+[31m-from application.bootstrap.bootstrap import bootstrap[m
+[31m-from application.cognitive import CognitiveEngine[m
+[32m+[m[32mfrom application.bootstrap import ([m
+[32m+[m[32m    bootstrap,[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mfrom application.cognitive import ([m
+[32m+[m[32m    CognitiveEngine,[m
+[32m+[m[32m)[m
+ [m
+[31m-from application.activity.activity_processor import ([m
+[32m+[m[32mfrom application.activity import ([m
+     ActivityProcessor,[m
+[32m+[m[32m    ActivityQuestionService,[m
+ )[m
+ [m
+[31m-from connectors.slack.normalizers import SlackNormalizer[m
+[31m-from connectors.slack.services import SlackService[m
+[32m+[m[32mfrom connectors.slack.normalizers import ([m
+[32m+[m[32m    SlackNormalizer,[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mfrom connectors.slack.services import ([m
+[32m+[m[32m    SlackService,[m
+[32m+[m[32m)[m
+ [m
+ from engines.communication.application.services import ([m
+     CommunicationService,[m
+[36m@@ -91,29 +102,56 @@[m [m_slack_service = SlackService([m
+ # ==========================================================[m
+ [m
+ def get_repository():[m
+[32m+[m[32m    """[m
+[32m+[m[32m    Return the shared communication repository.[m
+[32m+[m[32m    """[m
+[32m+[m
+     return _repository[m
+ [m
+ [m
+ def get_communication_service() -> CommunicationService:[m
+[32m+[m[32m    """[m
+[32m+[m[32m    Return the shared communication service.[m
+[32m+[m[32m    """[m
+[32m+[m
+     return _service[m
+ [m
+ [m
+ def get_slack_normalizer() -> SlackNormalizer:[m
+[32m+[m[32m    """[m
+[32m+[m[32m    Return the shared Slack normalizer.[m
+[32m+[m[32m    """[m
+[32m+[m
+     return _normalizer[m
+ [m
+ [m
+ def get_slack_service() -> SlackService:[m
+[32m+[m[32m    """[m
+[32m+[m[32m    Return the shared Slack service.[m
+[32m+[m[32m    """[m
+[32m+[m
+     return _slack_service[m
+ [m
+ [m
+ def get_cognitive_engine() -> CognitiveEngine:[m
+[32m+[m[32m    """[m
+[32m+[m[32m    Return the shared POLIS cognitive engine.[m
+[32m+[m[32m    """[m
+[32m+[m
+     return _cognitive_engine[m
+ [m
+[32m+[m
+ def get_activity_processor() -> ActivityProcessor:[m
+     """[m
+     Return the shared activity processor.[m
+     """[m
+ [m
+[31m-    container = get_container()[m
+[32m+[m[32m    return _application.activity_processor[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef get_activity_question_service() -> ActivityQuestionService:[m
+[32m+[m[32m    """[m
+[32m+[m[32m    Return the shared activity question service.[m
+[32m+[m[32m    """[m
+ [m
+[31m-    return container.activity_processor[m
+\ No newline at end of file[m
+[32m+[m[32m    return _application.activity_question_service[m
+\ No newline at end of file[m
