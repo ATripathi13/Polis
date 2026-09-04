@@ -7,6 +7,10 @@ from __future__ import annotations
 from application.bootstrap.bootstrap import bootstrap
 from application.cognitive import CognitiveEngine
 
+from application.activity.activity_processor import (
+    ActivityProcessor,
+)
+
 from connectors.slack.normalizers import SlackNormalizer
 from connectors.slack.services import SlackService
 
@@ -104,3 +108,12 @@ def get_slack_service() -> SlackService:
 
 def get_cognitive_engine() -> CognitiveEngine:
     return _cognitive_engine
+
+def get_activity_processor() -> ActivityProcessor:
+    """
+    Return the shared activity processor.
+    """
+
+    container = get_container()
+
+    return container.activity_processor

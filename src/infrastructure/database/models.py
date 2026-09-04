@@ -66,3 +66,61 @@ class KnowledgeRecordModel(Base):
         default=dict,
         nullable=False,
     )
+
+
+class ActivityEventModel(Base):
+    __tablename__ = "activity_events"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+
+    person_id: Mapped[str] = mapped_column(
+        String(255),
+        index=True,
+        nullable=False,
+    )
+
+    person_name: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
+    activity_type: Mapped[str] = mapped_column(
+        String(50),
+        index=True,
+        nullable=False,
+    )
+
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        index=True,
+        nullable=False,
+    )
+
+    source: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
+    source_event_id: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        index=True,
+    )
+
+    break_type: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    note: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )

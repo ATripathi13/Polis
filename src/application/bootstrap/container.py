@@ -10,6 +10,15 @@ from application.cognitive import (
     SimpleCognitiveEngine,
 )
 
+from application.activity import (
+    ActivityProcessor,
+    ActivityQuestionService,
+)
+
+from domain.activity import (
+    ActivityService,
+)
+
 from domain.knowledge import (
     KnowledgeRepository,
 )
@@ -24,3 +33,9 @@ class ApplicationContainer:
     engine: SimpleCognitiveEngine
 
     repository: KnowledgeRepository
+
+    activity_service: ActivityService
+
+    activity_processor: ActivityProcessor
+
+    activity_question_service: ActivityQuestionService

@@ -18,6 +18,7 @@ from domain.reasoning import (
     QuestionAnsweringService,
 )
 
+
 class SimpleCognitiveEngine(
     CognitiveEngine,
 ):
@@ -25,16 +26,22 @@ class SimpleCognitiveEngine(
     Default implementation of the
     Polis Cognitive Engine.
     """
+
     def __init__(
         self,
         pipeline: PolisPipeline,
         question_answering: QuestionAnsweringService,
+        activity_question_service=None,
     ) -> None:
 
         self._pipeline = pipeline
 
         self._question_answering = (
             question_answering
+        )
+
+        self._activity_question_service = (
+            activity_question_service
         )
 
     def learn(
@@ -55,7 +62,24 @@ class SimpleCognitiveEngine(
     ) -> Answer:
         """
         Answer a question.
+
+        Activity-state questions are handled
+        by ActivityQuestionService first.
+
+        All other questions continue through
+        the existing reasoning service.
         """
+
+        if self._activity_question_service is not None:
+
+            activity_answer = (
+                self._activity_question_service.answer(
+                    question,
+                )
+            )
+
+            if activity_answer is not None:
+                return activity_answer
 
         return (
             self._question_answering.answer(

@@ -8,6 +8,10 @@ from application.cognitive import (
     CognitiveEngine,
 )
 
+from application.activity import (
+    ActivityProcessor,
+)
+
 from engines.slack.dto import (
     SlackMessage,
 )
@@ -34,11 +38,13 @@ class SlackConnector:
         engine: CognitiveEngine,
         mapper: CommunicationMapper,
         settings: get_settings,
+        activity_processor: ActivityProcessor,
     ) -> None:
 
         self._engine = engine
         self._mapper = mapper
         self._settings = settings
+        self._activity_processor = activity_processor
 
     settings = get_settings()
 
@@ -46,22 +52,30 @@ class SlackConnector:
         self,
         message: SlackMessage,
     ) -> None:
-        """
-        Process an incoming Slack message.
-        """
-        # message = self._parser.parse(
-        #     payload,
-        # )
+
         print(f"[SLACK] Incoming user : {message.user!r}")
-        print(f"[SLACK] Bot user      : {self._settings.slack_bot_user_id!r}")
-        print(f"[SLACK] Equal?        : {message.user == self._settings.slack_bot_user_id}")
+        print(
+            f"[SLACK] Bot user      : "
+            f"{self._settings.slack_bot_user_id!r}"
+        )
+        print(
+            f"[SLACK] Equal?        : "
+            f"{message.user == self._settings.slack_bot_user_id}"
+        )
+
         if message.user == self._settings.slack_bot_user_id:
             return
+
+        self._activity_processor.process(
+            message,
+        )
+
         communication = (
             self._mapper.to_communication(
                 message,
             )
         )
+
         self._engine.learn(
             communication,
         )

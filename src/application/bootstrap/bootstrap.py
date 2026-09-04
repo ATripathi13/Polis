@@ -16,6 +16,12 @@ from application.cognitive import (
     SimpleCognitiveEngine,
 )
 
+from application.activity import (
+    ActivityDetector,
+    ActivityProcessor,
+    ActivityQuestionService,
+)
+
 from .container import (
     ApplicationContainer,
 )
@@ -33,8 +39,17 @@ from domain.knowledge import (
     SimpleKnowledgeValidator,
 )
 
+from domain.activity import (
+    ActivityService,
+)
+
 from infrastructure.database import (
     PostgreSQLKnowledgeRepository,
+    PostgreSQLActivityRepository,
+)
+
+from domain.activity import (
+    ActivityService,
 )
 
 from domain.observation import (
@@ -65,7 +80,21 @@ def bootstrap(
     application.
     """
     repository = PostgreSQLKnowledgeRepository()
+    activity_repository = PostgreSQLActivityRepository()
 
+    activity_service = ActivityService(
+	    activity_repository,
+	)
+
+    activity_detector = ActivityDetector()
+
+    activity_processor = ActivityProcessor(
+	    detector=activity_detector,
+	    activity_service=activity_service,
+	)
+    activity_question_service = ActivityQuestionService(
+        activity_service=activity_service,
+    )
     indexer = NullKnowledgeIndexer()
 
     validator = SimpleKnowledgeValidator(
@@ -139,9 +168,12 @@ def bootstrap(
     engine = SimpleCognitiveEngine(
         pipeline,
         reasoning,
+        activity_question_service,
     )
-
     return ApplicationContainer(
         engine=engine,
         repository=repository,
+        activity_service=activity_service,
+        activity_processor=activity_processor,
+        activity_question_service=activity_question_service,
     )

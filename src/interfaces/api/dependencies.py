@@ -7,10 +7,19 @@ from __future__ import annotations
 from application.cognitive import (
     SimpleCognitiveEngine,
 )
-from application.bootstrap import (get_container,)
+
+from application.bootstrap import (
+    get_container,
+)
+
 from domain.knowledge import (
     KnowledgeRepository,
 )
+
+from application.activity.activity_processor import (
+    ActivityProcessor,
+)
+
 
 def get_cognitive_engine(
 ) -> SimpleCognitiveEngine:
@@ -23,6 +32,7 @@ def get_cognitive_engine(
 
     return container.engine
 
+
 def get_repository(
 ) -> KnowledgeRepository:
     """
@@ -32,3 +42,13 @@ def get_repository(
     container = get_container()
 
     return container.repository
+
+
+def get_activity_processor() -> ActivityProcessor:
+    """
+    Return the shared activity processor.
+    """
+
+    container = get_container()
+
+    return container.activity_processor

@@ -83,7 +83,6 @@ polis.db
 
 # Docker
 .dockerignore
-Dockerfile
 
 # Node/Frontend
 node_modules/
@@ -143,3 +142,22 @@ postgres_data/
 qdrant_data/
 minio_data/
 backups/
+
+# Local development / test artifacts
+*.local
+*.test
+*.dump
+*.sql
+
+# Runtime artifacts
+*.pid
+*.pid.lock
+# Local development / test artifacts
+*.local
+*.test
+*.dump
+*.sql
+
+# Runtime artifacts
+*.pid
+*.pid.lock
