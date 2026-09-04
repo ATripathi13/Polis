@@ -4,15 +4,26 @@ Dependency providers.
 
 from __future__ import annotations
 
-from application.bootstrap.bootstrap import bootstrap
-from application.cognitive import CognitiveEngine
-
-from application.activity.activity_processor import (
-    ActivityProcessor,
+from application.bootstrap import (
+    bootstrap,
 )
 
-from connectors.slack.normalizers import SlackNormalizer
-from connectors.slack.services import SlackService
+from application.cognitive import (
+    CognitiveEngine,
+)
+
+from application.activity import (
+    ActivityProcessor,
+    ActivityQuestionService,
+)
+
+from connectors.slack.normalizers import (
+    SlackNormalizer,
+)
+
+from connectors.slack.services import (
+    SlackService,
+)
 
 from engines.communication.application.services import (
     CommunicationService,
@@ -91,29 +102,56 @@ _slack_service = SlackService(
 # ==========================================================
 
 def get_repository():
+    """
+    Return the shared communication repository.
+    """
+
     return _repository
 
 
 def get_communication_service() -> CommunicationService:
+    """
+    Return the shared communication service.
+    """
+
     return _service
 
 
 def get_slack_normalizer() -> SlackNormalizer:
+    """
+    Return the shared Slack normalizer.
+    """
+
     return _normalizer
 
 
 def get_slack_service() -> SlackService:
+    """
+    Return the shared Slack service.
+    """
+
     return _slack_service
 
 
 def get_cognitive_engine() -> CognitiveEngine:
+    """
+    Return the shared POLIS cognitive engine.
+    """
+
     return _cognitive_engine
+
 
 def get_activity_processor() -> ActivityProcessor:
     """
     Return the shared activity processor.
     """
 
-    container = get_container()
+    return _application.activity_processor
 
-    return container.activity_processor
+
+def get_activity_question_service() -> ActivityQuestionService:
+    """
+    Return the shared activity question service.
+    """
+
+    return _application.activity_question_service
