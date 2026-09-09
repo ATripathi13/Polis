@@ -20,6 +20,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # Copy application
 COPY src ./src
+COPY run_slack_listener.py ./
 
 # Make src the Python import root
 ENV PYTHONPATH=/app/src
