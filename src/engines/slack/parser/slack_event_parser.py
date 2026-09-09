@@ -11,11 +11,27 @@ from interfaces.api.models import (
 from engines.slack.dto import (
     SlackMessage,
 )
+
+from engines.slack.services import (
+    SlackIdentityService,
+)
+
+
 class SlackEventParser:
     """
     Converts raw Slack Events API payloads
     into SlackMessage DTOs.
     """
+
+    def __init__(
+        self,
+        identity_service: SlackIdentityService,
+    ) -> None:
+
+        self._identity_service = (
+            identity_service
+        )
+
     def parse(
         self,
         payload: SlackEventRequest,
@@ -23,10 +39,19 @@ class SlackEventParser:
         """
         Parse a Slack webhook payload.
         """
+
         event = payload.event
+
+        user_name = (
+            self._identity_service
+            .get_display_name(
+                event.user,
+            )
+        )
 
         return SlackMessage(
             user=event.user,
+            user_name=user_name,
             channel=event.channel,
             text=event.text,
             ts=event.ts,

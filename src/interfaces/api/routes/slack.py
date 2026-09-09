@@ -70,7 +70,7 @@ async def receive_event(
         get_activity_processor,
     ),
 ):
-
+    identity_service = SlackIdentityService()
     parser = SlackEventParser()
 
     message = parser.parse(

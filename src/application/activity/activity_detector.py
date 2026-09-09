@@ -99,6 +99,7 @@ class ActivityDetector:
             "take a break",
             "going on break",
             "going for a break",
+            "going for break",
             "going for lunch",
             "stepping away",
             "stepping out",
@@ -136,6 +137,9 @@ class ActivityDetector:
             "i am taking lunch",
             "stepping away for a bit",
             "stepping out for a bit",
+            "i'm going for break",
+            "im going for break",
+            "i am going for break",
         }:
             return DetectedActivity(
                 activity_type=ActivityType.BREAK_START,
@@ -162,7 +166,7 @@ class ActivityDetector:
             "i'm back from break",
             "im back from break",
             "i am back from break",
-            "back to work",
+            "back to work",            
         }:
             return DetectedActivity(
                 activity_type=ActivityType.BREAK_END,

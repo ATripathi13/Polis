@@ -11,6 +11,11 @@ from engines.slack.dto import SlackMessage
 
 from .activity_detector import ActivityDetector
 
+from engines.slack.services import (
+    SlackClient,
+    SlackResponder,
+    SlackIdentityService,
+)
 
 class ActivityProcessor:
     """
@@ -44,7 +49,10 @@ class ActivityProcessor:
 
         self._activity_service.record(
             person_id=message.user,
-            person_name=message.user,
+            person_name=(
+                message.user_name
+                or message.user
+            ),
             activity_type=detected.activity_type,
             occurred_at=occurred_at,
             source=ActivitySource.SLACK,

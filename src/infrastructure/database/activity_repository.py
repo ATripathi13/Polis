@@ -14,7 +14,7 @@ from domain.common.identifier import Identifier
 from .connection import SessionLocal
 from .models import ActivityEventModel
 
-
+from sqlalchemy import func
 class PostgreSQLActivityRepository(
     ActivityRepository,
 ):
@@ -27,6 +27,20 @@ class PostgreSQLActivityRepository(
         event: ActivityEvent,
     ) -> None:
         with SessionLocal() as session:
+
+            if event.source_event_id is not None:
+                existing = (
+                    session.query(ActivityEventModel)
+                    .filter(
+                        ActivityEventModel.person_id == event.person_id,
+                        ActivityEventModel.source_event_id
+                        == event.source_event_id,
+                    )
+                    .first()
+                )
+
+                if existing is not None:
+                    return
 
             record = ActivityEventModel(
                 id=str(event.identifier.graph_id),
@@ -77,6 +91,48 @@ class PostgreSQLActivityRepository(
             return [
                 self._to_domain(record)
                 for record in records
+            ]
+
+    def find_people_by_name(
+        self,
+        person_name: str,
+    ) -> list[ActivityEvent]:
+
+        normalized_name = person_name.strip()
+
+        if not normalized_name:
+            return []
+
+        with SessionLocal() as session:
+
+            records = (
+                session.query(ActivityEventModel)
+                .filter(
+                    func.lower(ActivityEventModel.person_name)
+                    == normalized_name.lower()
+                )
+                .order_by(
+                    ActivityEventModel.person_id,
+                    ActivityEventModel.occurred_at.desc(),
+                    ActivityEventModel.created_at.desc(),
+                )
+                .all()
+            )
+
+            latest_by_person: dict[
+                str,
+                ActivityEventModel,
+            ] = {}
+
+            for record in records:
+                if record.person_id not in latest_by_person:
+                    latest_by_person[
+                        record.person_id
+                    ] = record
+
+            return [
+                self._to_domain(record)
+                for record in latest_by_person.values()
             ]
 
     def find_currently_on_break(

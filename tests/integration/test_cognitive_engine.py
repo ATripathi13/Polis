@@ -53,18 +53,38 @@ from engines.communication.domain.value_objects import (
 from domain.reasoning.rankers.keyword_ranker import (
     KeywordRanker,
 )
+
+from engines.knowledge.infrastructure.indexing import (
+    NullKnowledgeIndexer,
+)
+from application.services.knowledge_acceptance_service import (
+    KnowledgeAcceptanceService,
+)
+class FakeKnowledgeUnderstanding:
+    def analyze(self, text):
+        return {
+            "is_knowledge": True,
+            "summary": "We use PostgreSQL.",
+            "confidence": 0.95,
+        }
+
 def test_cognitive_engine():
 
     repository = InMemoryKnowledgeRepository()
-
+    knowledge_acceptance_service = KnowledgeAcceptanceService(
+        repository,
+    )
     validator = SimpleKnowledgeValidator(
         repository,
+        NullKnowledgeIndexer(),
     )
 
     observation_registry = ObservationRuleRegistry()
 
     observation_registry.register(
-        KnowledgeObservationRule(),
+        KnowledgeObservationRule(
+            FakeKnowledgeUnderstanding(),
+        ),
     )
 
     observation_extractor = (
@@ -105,6 +125,7 @@ def test_cognitive_engine():
         organization_builder=organization_builder,
         knowledge_builder=knowledge_builder,
         knowledge_validator=validator,
+        knowledge_acceptance_service=knowledge_acceptance_service,
         reasoning_service=None,
     )
 

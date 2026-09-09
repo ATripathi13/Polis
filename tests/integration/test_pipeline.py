@@ -55,6 +55,20 @@ from domain.knowledge import (
     ValidationStatus,
 )
 
+from engines.knowledge.infrastructure.indexing import (
+    NullKnowledgeIndexer,
+)
+
+from application.services.knowledge_acceptance_service import (
+    KnowledgeAcceptanceService,
+)
+class FakeKnowledgeUnderstanding:
+    def analyze(self, text):
+        return {
+            "is_knowledge": True,
+            "summary": "We use PostgreSQL.",
+            "confidence": 0.95,
+        }
 def test_polis_pipeline():
     communication = CommunicationEvent.create(
         correlation_id=Identifier(),
@@ -87,7 +101,9 @@ def test_polis_pipeline():
     observation_registry = ObservationRuleRegistry()
 
     observation_registry.register(
-        KnowledgeObservationRule(),
+        KnowledgeObservationRule(
+            FakeKnowledgeUnderstanding(),
+        ),
     )
     # Register your observation rules
     # Example:
@@ -121,9 +137,12 @@ def test_polis_pipeline():
     )
 
     repository = InMemoryKnowledgeRepository()
-
+    knowledge_acceptance_service = KnowledgeAcceptanceService(
+        repository,
+    )
     validator = SimpleKnowledgeValidator(
         repository,
+        NullKnowledgeIndexer(),
     )
 
     pipeline = PolisPipeline(
@@ -132,6 +151,7 @@ def test_polis_pipeline():
         organization_builder=organization_builder,
         knowledge_builder=knowledge_builder,
         knowledge_validator=validator,
+        knowledge_acceptance_service=knowledge_acceptance_service,
         reasoning_service=None,
     )
 

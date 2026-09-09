@@ -19,7 +19,13 @@ from engines.communication.domain.value_objects import (
     CommunicationIdentity,
     Content,
 )
-
+class FakeKnowledgeUnderstanding:
+    def analyze(self, text):
+        return {
+            "is_knowledge": True,
+            "summary": "We use PostgreSQL.",
+            "confidence": 0.95,
+        }
 
 def test_extract_knowledge_observation():
 
@@ -45,7 +51,9 @@ def test_extract_knowledge_observation():
         ),
     )
 
-    rule = KnowledgeObservationRule()
+    rule = KnowledgeObservationRule(
+        FakeKnowledgeUnderstanding(),
+    )
 
     observations = rule.extract(
         communication,

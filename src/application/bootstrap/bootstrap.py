@@ -20,6 +20,7 @@ from application.activity import (
     ActivityDetector,
     ActivityProcessor,
     ActivityQuestionService,
+    AttendanceCalculator,
 )
 
 from .container import (
@@ -39,8 +40,12 @@ from domain.knowledge import (
     SimpleKnowledgeValidator,
 )
 
-from domain.activity import (
+from application.activity import (
+    ActivityDetector,
+    ActivityProcessor,
+    ActivityQuestionService,
     ActivityService,
+    AttendanceCalculator,
 )
 
 from infrastructure.database import (
@@ -48,9 +53,6 @@ from infrastructure.database import (
     PostgreSQLActivityRepository,
 )
 
-from domain.activity import (
-    ActivityService,
-)
 
 from domain.observation import (
     KnowledgeObservationRule,
@@ -82,9 +84,12 @@ def bootstrap(
     repository = PostgreSQLKnowledgeRepository()
     activity_repository = PostgreSQLActivityRepository()
 
+    attendance_calculator = AttendanceCalculator()
+
     activity_service = ActivityService(
-	    activity_repository,
-	)
+        activity_repository,
+        attendance_calculator,
+    )
 
     activity_detector = ActivityDetector()
 

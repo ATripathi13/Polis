@@ -10,7 +10,9 @@ from domain.organization import (
     OrganizationEvent,
     OrganizationEventType,
 )
-
+from engines.knowledge.infrastructure.indexing import (
+    NullKnowledgeIndexer,
+)
 
 def test_accept_new_knowledge():
 
@@ -18,6 +20,7 @@ def test_accept_new_knowledge():
 
     validator = SimpleKnowledgeValidator(
         repository,
+        NullKnowledgeIndexer(),
     )
 
     event = OrganizationEvent(
@@ -48,6 +51,7 @@ def test_update_existing_knowledge():
 
     validator = SimpleKnowledgeValidator(
         repository,
+        NullKnowledgeIndexer(),
     )
 
     event = OrganizationEvent(

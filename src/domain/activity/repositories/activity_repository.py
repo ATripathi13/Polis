@@ -29,6 +29,17 @@ class ActivityRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def find_people_by_name(
+        self,
+        person_name: str,
+    ) -> list[ActivityEvent]:
+        """
+        Return activity records for people whose
+        persisted Slack name matches the supplied name.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def find_currently_on_break(
         self,
     ) -> list[ActivityEvent]:

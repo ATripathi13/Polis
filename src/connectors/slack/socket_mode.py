@@ -205,3 +205,9 @@ class SlackSocketMode:
         )
 
         handler.start()
+
+
+if __name__ == "__main__":
+    slack_service = SlackService()
+    listener = SlackSocketMode(slack_service)
+    listener.start()        
