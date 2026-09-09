@@ -47,3 +47,5 @@ tzdata==2026.2
 uvicorn==0.49.0
 openai
 psycopg2-binary
+
+requests>=2.31.0
