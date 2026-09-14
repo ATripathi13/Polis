@@ -155,3 +155,18 @@ def get_activity_question_service() -> ActivityQuestionService:
     """
 
     return _application.activity_question_service
+
+def get_meeting_transcript_service():
+    """
+    Return the shared meeting transcript service.
+    """
+
+    return _application.meeting_transcript_service
+
+    
+def get_meeting_transcript_provider():
+    """
+    Return the shared meeting transcript provider.
+    """
+
+    return _application.meeting_transcript_provider    

@@ -23,7 +23,15 @@ from domain.knowledge import (
     KnowledgeRepository,
 )
 
+from application.meetings import (
+    MeetingTranscriptService,
+    MeetingTranscriptProvider,
+    TeamsSubscriptionService,
+)
 
+from domain.meetings import (
+    TeamsSubscriptionRepository,
+)
 @dataclass(slots=True)
 class ApplicationContainer:
     """
@@ -39,3 +47,11 @@ class ApplicationContainer:
     activity_processor: ActivityProcessor
 
     activity_question_service: ActivityQuestionService
+
+    meeting_transcript_service: MeetingTranscriptService
+
+    meeting_transcript_provider: MeetingTranscriptProvider
+
+    teams_subscription_repository: TeamsSubscriptionRepository
+
+    teams_subscription_service: TeamsSubscriptionService

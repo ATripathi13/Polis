@@ -89,6 +89,26 @@ class Settings(BaseSettings):
     slack_app_token: str = Field(alias="SLACK_APP_TOKEN")
 
     slack_bot_user_id: str = Field(alias="SLACK_BOT_USER_ID")
+
+    # ==========================================================
+    # Microsoft Teams / Microsoft Graph
+    # ==========================================================
+
+    microsoft_graph_tenant_id: str = Field(
+        alias="MICROSOFT_GRAPH_TENANT_ID"
+    )
+
+    microsoft_graph_client_id: str = Field(
+        alias="MICROSOFT_GRAPH_CLIENT_ID"
+    )
+
+    microsoft_graph_client_secret: str = Field(
+        alias="MICROSOFT_GRAPH_CLIENT_SECRET"
+    )
+
+    teams_webhook_url: str = Field(
+        alias="TEAMS_WEBHOOK_URL"
+    )
     # ==========================================================
     # LLM / OpenRouter
     # ==========================================================

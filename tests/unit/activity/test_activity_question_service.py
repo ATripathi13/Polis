@@ -83,7 +83,7 @@ def test_when_person_started_work():
         ),
     ]
 
-    service = create_service(events)
+    service = create_service(events, now=start)
     answer = service.answer(
         Question(text="When did Akshat start work?")
     )
@@ -126,7 +126,7 @@ def test_when_person_went_on_break():
         ),
     ]
 
-    service = create_service(events)
+    service = create_service(events, now=break_start)
 
     answer = service.answer(
         Question(text="When did Akshat go on break?")
@@ -185,7 +185,7 @@ def test_when_person_came_back():
         ),
     ]
 
-    service = create_service(events)
+    service = create_service(events, now=break_end)
 
     answer = service.answer(
         Question(text="When did Akshat come back?")
@@ -229,7 +229,7 @@ def test_when_person_finished_work():
         ),
     ]
 
-    service = create_service(events)
+    service = create_service(events, now=end)
 
     answer = service.answer(
         Question(text="When did Akshat finish work?")

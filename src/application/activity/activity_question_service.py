@@ -449,7 +449,7 @@ class ActivityQuestionService:
                 person.person_id,
             )
 
-            today = datetime.now(timezone.utc).date()
+            today = self._now_provider().date()
 
             today_events = [
                 event

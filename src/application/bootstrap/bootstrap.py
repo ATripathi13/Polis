@@ -53,6 +53,24 @@ from infrastructure.database import (
     PostgreSQLActivityRepository,
 )
 
+from application.meetings import (
+    MeetingTranscriptService,
+)
+
+from infrastructure.meetings.microsoft_teams_subscription_provider import (
+    MicrosoftTeamsSubscriptionProvider,
+)
+
+from application.meetings.teams_subscription_service import (
+    TeamsSubscriptionService,
+)
+
+from infrastructure.config.settings import get_settings
+
+from infrastructure.database import (
+    PostgreSQLMeetingTranscriptRepository,
+    PostgreSQLTeamsSubscriptionRepository,
+)
 
 from domain.observation import (
     KnowledgeObservationRule,
@@ -75,15 +93,55 @@ from domain.reasoning.rankers import (
 from engines.knowledge.infrastructure.indexing import (
     NullKnowledgeIndexer,
 )
+
+from infrastructure.meetings.microsoft_graph_token_provider import (
+    MicrosoftGraphTokenProvider,
+)
+
+from infrastructure.meetings.microsoft_teams_transcript_provider import (
+    MicrosoftTeamsTranscriptProvider,
+)
+
 def bootstrap(
 ) -> ApplicationContainer:
     """
     Assemble the complete POLIS
     application.
     """
+    settings = get_settings()
     repository = PostgreSQLKnowledgeRepository()
     activity_repository = PostgreSQLActivityRepository()
+    meeting_transcript_repository = (
+        PostgreSQLMeetingTranscriptRepository()
+    )
+    teams_subscription_repository = (
+        PostgreSQLTeamsSubscriptionRepository()
+    )
 
+    microsoft_graph_token_provider = (
+        MicrosoftGraphTokenProvider()
+    )
+
+    microsoft_teams_transcript_provider = (
+        MicrosoftTeamsTranscriptProvider(
+            microsoft_graph_token_provider,
+        )
+    )
+
+    microsoft_teams_subscription_provider = (
+        MicrosoftTeamsSubscriptionProvider(
+            microsoft_graph_token_provider,
+        )
+    )
+
+    teams_subscription_service = TeamsSubscriptionService(
+        repository=teams_subscription_repository,
+        provider=microsoft_teams_subscription_provider,
+        notification_url=settings.teams_webhook_url,
+    )
+    meeting_transcript_service = MeetingTranscriptService(
+        repository=meeting_transcript_repository,
+    )
     attendance_calculator = AttendanceCalculator()
 
     activity_service = ActivityService(
@@ -181,4 +239,8 @@ def bootstrap(
         activity_service=activity_service,
         activity_processor=activity_processor,
         activity_question_service=activity_question_service,
+        meeting_transcript_service=meeting_transcript_service,
+        meeting_transcript_provider=microsoft_teams_transcript_provider,
+        teams_subscription_repository=teams_subscription_repository,
+        teams_subscription_service=teams_subscription_service,
     )
