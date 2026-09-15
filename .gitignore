@@ -161,3 +161,4 @@ backups/
 # Runtime artifacts
 *.pid
 *.pid.lock
+deployment/docker/.env.docker

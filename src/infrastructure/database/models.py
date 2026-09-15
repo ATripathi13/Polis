@@ -253,3 +253,75 @@ class TeamsSubscriptionModel(Base):
         DateTime(timezone=True),
         nullable=False,
     )
+
+class CommunicationEventModel(Base):
+    __tablename__ = "communication_events"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+
+    correlation_id: Mapped[str] = mapped_column(
+        String(36),
+        nullable=False,
+        index=True,
+    )
+
+    source: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    source_event_id: Mapped[str] = mapped_column(
+        String(1000),
+        nullable=False,
+        index=True,
+    )
+
+    actor: Mapped[dict] = mapped_column(
+        JSONB,
+        default=dict,
+        nullable=False,
+    )
+
+    channel: Mapped[dict] = mapped_column(
+        JSONB,
+        default=dict,
+        nullable=False,
+    )
+
+    content: Mapped[dict] = mapped_column(
+        JSONB,
+        default=dict,
+        nullable=False,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
+    attachments: Mapped[list] = mapped_column(
+        JSONB,
+        default=list,
+        nullable=False,
+    )
+
+    references: Mapped[list] = mapped_column(
+        JSONB,
+        default=list,
+        nullable=False,
+    )
+
+    mentions: Mapped[list] = mapped_column(
+        JSONB,
+        default=list,
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )

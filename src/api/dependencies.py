@@ -25,13 +25,19 @@ from connectors.slack.services import (
     SlackService,
 )
 
+from connectors.microsoft_teams.normalizers import (
+    TeamsNormalizer,
+)
+
+from connectors.microsoft_teams.services import (
+    TeamsService,
+)
+
 from engines.communication.application.services import (
     CommunicationService,
 )
 
-from engines.communication.infrastructure.repositories import (
-    InMemoryCommunicationRepository,
-)
+from engines.communication.infrastructure.repositories import PostgreSQLCommunicationRepository
 
 from domain.events import (
     EventDispatcher,
@@ -60,8 +66,7 @@ _cognitive_engine = _application.engine
 # COMMUNICATION INFRASTRUCTURE
 # ==========================================================
 
-_repository = InMemoryCommunicationRepository()
-
+_repository = PostgreSQLCommunicationRepository()
 _registry = EventRegistry()
 
 _registry.register(
@@ -92,6 +97,19 @@ _normalizer = SlackNormalizer()
 
 _slack_service = SlackService(
     normalizer=_normalizer,
+    communication_service=_service,
+    cognitive_engine=_cognitive_engine,
+)
+
+
+# ==========================================================
+# MICROSOFT TEAMS
+# ==========================================================
+
+_teams_normalizer = TeamsNormalizer()
+
+_teams_service = TeamsService(
+    normalizer=_teams_normalizer,
     communication_service=_service,
     cognitive_engine=_cognitive_engine,
 )
@@ -170,3 +188,17 @@ def get_meeting_transcript_provider():
     """
 
     return _application.meeting_transcript_provider    
+
+def get_teams_subscription_service():
+    """
+    Return the shared Teams subscription service.
+    """
+
+    return _application.teams_subscription_service
+
+
+def get_teams_service() -> TeamsService:
+    """
+    Return the shared Microsoft Teams service.
+    """
+    return _teams_service

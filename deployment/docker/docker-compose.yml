@@ -1,110 +1,152 @@
 services:
-  # ==========================================================
-  # PostgreSQL - Canonical Organizational Database
-  # ==========================================================
-  postgres:
-    image: postgres:17-alpine
-    container_name: polis-postgres
 
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  # ==========================================================
+  # POLIS API
+  # ==========================================================
+  polis-api:
+    image: polis:test
+    container_name: polis-api
 
     ports:
-      - "${POSTGRES_PORT}:5432"
+      - "8000:8000"
 
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+    env_file:
+      - .env.docker
 
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    environment:
+      POSTGRES_HOST: n8n-postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: polis
+      POSTGRES_USER: polis
+      POSTGRES_PASSWORD: 1234
+      DATABASE_URL: postgresql://polis:1234@n8n-postgres:5432/polis
+
+      QDRANT_HOST: polis-qdrant
+      QDRANT_PORT: 6333
+      QDRANT_URL: http://polis-qdrant:6333
+      VECTOR_STORE_URL: http://polis-qdrant:6333
+
+      MINIO_HOST: polis-minio
+      MINIO_PORT: 9000
+      MINIO_CONSOLE_PORT: 9001
+      MINIO_ENDPOINT: http://polis-minio:9000
+
+    depends_on:
+      - polis-qdrant
+      - polis-minio
 
     restart: unless-stopped
 
     networks:
-      - polis_network
+      - n8n_n8n-network
+
 
   # ==========================================================
-  # Qdrant - Vector Database
+  # POLIS SLACK LISTENER
   # ==========================================================
-  qdrant:
+  polis-slack:
+    image: polis:test
+    container_name: polis-slack
+
+    command:
+      - python
+      - /app/run_slack_listener.py
+    
+    healthcheck:
+      disable: true
+    
+    env_file:
+      - .env.docker
+
+    environment:
+      POSTGRES_HOST: n8n-postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: polis
+      POSTGRES_USER: polis
+      POSTGRES_PASSWORD: 1234
+      DATABASE_URL: postgresql://polis:1234@n8n-postgres:5432/polis
+
+      QDRANT_HOST: polis-qdrant
+      QDRANT_PORT: 6333
+      QDRANT_URL: http://polis-qdrant:6333
+      VECTOR_STORE_URL: http://polis-qdrant:6333
+
+      MINIO_HOST: polis-minio
+      MINIO_PORT: 9000
+      MINIO_CONSOLE_PORT: 9001
+      MINIO_ENDPOINT: http://polis-minio:9000
+
+    depends_on:
+      - polis-qdrant
+      - polis-minio
+
+    restart: unless-stopped
+
+    networks:
+      - n8n_n8n-network
+
+
+  # ==========================================================
+  # QDRANT
+  # ==========================================================
+  polis-qdrant:
     image: qdrant/qdrant:latest
     container_name: polis-qdrant
 
-    ports:
-      - "${QDRANT_PORT}:6333"
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
 
     volumes:
-      - qdrant_data:/qdrant/storage
-
-    environment:
-      QDRANT_API_KEY: ${QDRANT_API_KEY}
+      - polis_qdrant_data:/qdrant/storage
 
     restart: unless-stopped
 
     networks:
-      - polis_network
+      - n8n_n8n-network
+
 
   # ==========================================================
-  # MinIO - Object Storage
+  # MINIO
   # ==========================================================
-  minio:
+  polis-minio:
     image: minio/minio:latest
     container_name: polis-minio
 
-    command: server /data --console-address ":9001"
+    command:
+      - server
+      - /data
+      - --console-address
+      - ":9001"
 
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
 
-    ports:
-      - "${MINIO_PORT}:9000"
-      - "${MINIO_CONSOLE_PORT}:9001"
-
     volumes:
-      - minio_data:/data
+      - polis_minio_data:/data
 
     restart: unless-stopped
 
     networks:
-      - polis_network
+      - n8n_n8n-network
 
-  # ==========================================================
-  # Adminer - PostgreSQL Management UI
-  # ==========================================================
-  adminer:
-    image: adminer:latest
-    container_name: polis-adminer
-
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-    ports:
-      - "8080:8080"
-
-    restart: unless-stopped
-
-    networks:
-      - polis_network
 
 # ==========================================================
-# Volumes
+# Persistent storage
 # ==========================================================
 volumes:
-  postgres_data:
-  qdrant_data:
-  minio_data:
+
+  polis_qdrant_data:
+    name: polis_qdrant_data
+
+  polis_minio_data:
+    name: polis_minio_data
+
 
 # ==========================================================
-# Network
+# Existing n8n network
 # ==========================================================
 networks:
-  polis_network:
-    name: polis_network
-    driver: bridge
+
+  n8n_n8n-network:
+    external: true

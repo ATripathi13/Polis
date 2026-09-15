@@ -6,10 +6,15 @@ from fastapi.responses import PlainTextResponse
 from api.dependencies import (
     get_meeting_transcript_provider,
     get_meeting_transcript_service,
+    get_teams_service,
 )
 from application.meetings import (
     MeetingTranscriptService,
     MeetingTranscriptProvider,
+)
+
+from connectors.microsoft_teams.services import (
+    TeamsService,
 )
 
 
@@ -27,6 +32,9 @@ async def teams_webhook(
     ),
     service: MeetingTranscriptService = Depends(
         get_meeting_transcript_service
+    ),
+    teams_service: TeamsService = Depends(
+        get_teams_service
     ),
 ):
     validation_token = request.query_params.get("validationToken")
@@ -93,4 +101,13 @@ async def teams_webhook(
         service.ingest(transcript)
 
         print("  transcript persistence: SUCCESS")
+
+        communications = teams_service.ingest_transcript(
+            transcript=transcript.transcript,
+            meeting_id=online_meeting_id,
+            transcript_id=transcript_id,
+        )
+
+        print("  communication events:", len(communications))
+        print("  cognitive processing: SUCCESS")
     return {"status": "accepted"}
