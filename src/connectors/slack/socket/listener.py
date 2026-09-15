@@ -216,7 +216,29 @@ class SlackSocketListener:
 
             # ======================================================
             # POLIS question handling.
+            #
+            # POLIS only responds when explicitly mentioned.
+            # All Slack messages are still ingested and processed
+            # above so they remain available for organizational memory.
             # ======================================================
+
+            settings = get_settings()
+            bot_user_id = settings.slack_bot_user_id
+
+            mention_token = f"<@{bot_user_id}>"
+            is_polis_mentioned = mention_token in text
+
+            if not is_polis_mentioned:
+                logger.info(
+                    "Slack message learned without POLIS response",
+                    extra={
+                        "channel_id": channel_id,
+                        "user_id": user_id,
+                        "user_name": user_name,
+                        "message_ts": ts,
+                    },
+                )
+                return
 
             try:
                 self._intent_router.handle(
@@ -224,7 +246,7 @@ class SlackSocketListener:
                 )
 
                 logger.info(
-                    "Slack intent handled",
+                    "Slack intent handled for explicit POLIS mention",
                     extra={
                         "channel_id": channel_id,
                         "user_id": user_id,
