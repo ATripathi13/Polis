@@ -20,7 +20,6 @@ from .teams_subscription_repository import (
     PostgreSQLTeamsSubscriptionRepository,
 )
 
-
 __all__ = [
     "Base",
     "SessionLocal",

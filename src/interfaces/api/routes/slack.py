@@ -101,7 +101,7 @@ async def receive_event(
     intent_router.handle(
         message,
     )
-
+    conversation_repository = get_conversation_repository()
     return {
         "status": "accepted",
     }

@@ -52,6 +52,9 @@ from engines.communication.domain.events import (
     CommunicationCreatedEvent,
 )
 
+from infrastructure.database.postgres_conversation_repository import (
+    PostgreSQLConversationRepository,
+)
 
 # ==========================================================
 # POLIS APPLICATION
@@ -67,6 +70,7 @@ _cognitive_engine = _application.engine
 # ==========================================================
 
 _repository = PostgreSQLCommunicationRepository()
+_conversation_repository = PostgreSQLConversationRepository()
 _registry = EventRegistry()
 
 _registry.register(
@@ -202,3 +206,10 @@ def get_teams_service() -> TeamsService:
     Return the shared Microsoft Teams service.
     """
     return _teams_service
+
+def get_conversation_repository() -> PostgreSQLConversationRepository:
+    """
+    Return the shared conversation repository.
+    """
+
+    return _conversation_repository

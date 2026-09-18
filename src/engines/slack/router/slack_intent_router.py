@@ -1,5 +1,6 @@
 """
-Routes Slack messages based on intent.
+Routes explicit POLIS Slack messages to the conversational
+cognitive engine.
 """
 
 from __future__ import annotations
@@ -9,7 +10,11 @@ from application.cognitive import (
 )
 
 from domain.reasoning import (
+    ConversationContext,
     Question,
+)
+from domain.reasoning.repositories import (
+    ConversationRepository,
 )
 
 from engines.slack.dto import (
@@ -19,16 +24,20 @@ from engines.slack.dto import (
 from engines.slack.services import (
     SlackResponder,
 )
+
+
 class SlackIntentRouter:
     """
-    Routes Slack messages to the
-    appropriate cognitive operation.
+    Routes explicitly addressed POLIS messages
+    to the cognitive engine.
     """
+
     def __init__(
         self,
         engine: CognitiveEngine,
         responder: SlackResponder,
         connector,
+        conversation_repository: ConversationRepository,
     ) -> None:
 
         self._engine = engine
@@ -37,37 +46,63 @@ class SlackIntentRouter:
 
         self._connector = connector
 
+        self._conversation_repository = conversation_repository
+
     def handle(
         self,
         message: SlackMessage,
     ) -> None:
         """
-        Handle an incoming Slack message.
+        Handle an explicit POLIS Slack message.
+
+        The Slack listener is responsible for determining
+        whether POLIS was mentioned. Once this method is
+        called, the message is treated as a conversational
+        request regardless of punctuation.
         """
+
         text = message.text.strip()
 
         if not text:
             return
-        if text.endswith("?"):
 
-            question = Question(
-                text=text,
+        thread_ts = message.thread_ts or message.ts
+
+        conversation_context = self._conversation_repository.get(
+            channel_id=message.channel,
+            thread_ts=thread_ts,
+        )
+
+        if conversation_context is None:
+            conversation_context = ConversationContext(
+                user_id=message.user,
+                channel_id=message.channel,
+                thread_ts=thread_ts,
             )
 
-            answer = self._engine.ask(
-                question,
-            )
+        question = Question(
+            text=text,
+            context=conversation_context,
+        )
 
-            self._responder.reply(
-                channel=message.channel,
-                thread_ts=(
-                    message.thread_ts
-                    or message.ts
-                ),
-                text=answer.text,
-            )
+        answer = self._engine.ask(
+            question,
+        )
 
-            return
-        self._connector.receive(
-            message,
+        updated_context = conversation_context.add_exchange(
+            user_message=text,
+            assistant_message=answer.text,
+        )
+
+        self._conversation_repository.save(
+            updated_context,
+        )
+
+        self._responder.reply(
+            channel=message.channel,
+            thread_ts=(
+                message.thread_ts
+                or message.ts
+            ),
+            text=answer.text,
         )

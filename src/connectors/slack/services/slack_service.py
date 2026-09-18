@@ -60,9 +60,20 @@ class SlackService:
 
         # Send the communication into the POLIS
         # cognitive engine.
-        self._cognitive_engine.learn(
-            saved,
-        )
+        #
+        # Knowledge enrichment is secondary to communication
+        # persistence. If the LLM is unavailable, the raw
+        # communication must still remain successfully ingested.
+        try:
+            self._cognitive_engine.learn(
+                saved,
+            )
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "Failed to enrich Slack communication with cognitive learning"
+            )
 
         return saved
 

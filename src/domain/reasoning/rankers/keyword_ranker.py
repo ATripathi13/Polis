@@ -73,9 +73,19 @@ class KeywordRanker(
     ) -> KnowledgeCandidate | None:
         if not knowledge:
             return None
+        conversation_text = question.text
+
+        if question.context is not None:
+            conversation_text = " ".join(
+                message["content"]
+                for message in question.context.history
+                if message.get("content")
+            ) + " " + question.text
+
         question_words = self._tokenize(
-            question.text,
+            conversation_text,
         )
+        
         best_candidate = None
 
         best_score = -1

@@ -32,7 +32,9 @@ from engines.slack.services import (
     SlackIdentityService,
     SlackResponder,
 )
-
+from api.dependencies import (
+    get_conversation_repository,
+)
 from infrastructure.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -81,10 +83,13 @@ class SlackSocketListener:
             SlackClient(),
         )
 
+        self._conversation_repository = get_conversation_repository()
+
         self._intent_router = SlackIntentRouter(
             engine=self._slack_service._cognitive_engine,
             responder=self._responder,
             connector=self._connector,
+            conversation_repository=self._conversation_repository,
         )
 
         self._register_handlers()
@@ -239,7 +244,19 @@ class SlackSocketListener:
                     },
                 )
                 return
+            clean_text = text.replace(mention_token, "").strip()
 
+            activity_message = ActivitySlackMessage(
+                user=activity_message.user,
+                channel=activity_message.channel,
+                text=clean_text,
+                ts=activity_message.ts,
+                event_ts=activity_message.event_ts,
+                thread_ts=activity_message.thread_ts,
+                user_name=activity_message.user_name,
+                metadata=activity_message.metadata,
+            )
+            
             try:
                 self._intent_router.handle(
                     activity_message,

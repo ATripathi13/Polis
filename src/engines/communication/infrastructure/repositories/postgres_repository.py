@@ -142,7 +142,174 @@ class PostgreSQLCommunicationRepository(
                 return None
 
             return self._to_domain(record)
+    def search(
+        self,
+        *,
+        query: str,
+        limit: int = 20,
+        actor_id: str | None = None,
+        exclude_questions: bool = False,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+    ) -> list[CommunicationEvent]:
 
+        query = query.strip().lower()
+
+        if not query:
+            return []
+
+        with SessionLocal() as session:
+
+            records = (
+                session.query(
+                    CommunicationEventModel
+                )
+            )
+
+            if start_time is not None:
+                records = records.filter(
+                    CommunicationEventModel.created_at
+                    >= start_time
+                )
+
+            if end_time is not None:
+                records = records.filter(
+                    CommunicationEventModel.created_at
+                    < end_time
+                )
+
+            records = (
+                records
+                .order_by(
+                    CommunicationEventModel.created_at.desc()
+                )
+                .limit(100)
+                .all()
+            )
+
+            query_words = {
+                word.strip(".,!?;:()[]{}\"'")
+                for word in query.split()
+                if word.strip(".,!?;:()[]{}\"'")
+            }
+
+            stop_words = {
+                "what",
+                "am",
+                "i",
+                "the",
+                "a",
+                "an",
+                "is",
+                "are",
+                "was",
+                "were",
+                "do",
+                "does",
+                "did",
+                "on",
+                "in",
+                "to",
+                "of",
+                "for",
+                "my",
+                "me",
+                "we",
+                "our",
+                "you",
+                "your",
+                "today",
+            }
+
+            meaningful_words = query_words - stop_words
+
+            results = []
+
+            for record in records:
+
+                if actor_id is not None:
+
+                    internal_id = (
+                        record.actor.get("identity", {}).get(
+                            "internal_id"
+                        )
+                        if record.actor
+                        else None
+                    )
+
+                    if internal_id != actor_id:
+                        continue
+
+                body = (
+                    record.content.get("body", "")
+                    if record.content
+                    else ""
+                )
+
+                if not body:
+                    continue
+
+                searchable_text = body.lower()
+
+                if exclude_questions:
+
+                    if searchable_text.endswith("?"):
+                        continue
+
+                    question_starters = (
+                        "what ",
+                        "why ",
+                        "who ",
+                        "where ",
+                        "when ",
+                        "which ",
+                        "how ",
+                        "can ",
+                        "could ",
+                        "would ",
+                        "should ",
+                        "is ",
+                        "are ",
+                        "do ",
+                        "does ",
+                        "did ",
+                        "tell me ",
+                        "show me ",
+                        "list ",
+                        "summarize ",
+                        "explain ",
+                    )
+
+                    if searchable_text.startswith(
+                        question_starters
+                    ):
+                        continue
+
+                if meaningful_words and all(
+                    word in searchable_text
+                    for word in meaningful_words
+                ):
+                    normalized_body = " ".join(
+                        searchable_text.split()
+                    )
+
+                    already_seen = any(
+                        " ".join(
+                            event.content.body.lower().split()
+                        ) == normalized_body
+                        for event in results
+                    )
+
+                    if not already_seen:
+                        results.append(
+                            self._to_domain(record)
+                        )
+
+                if len(results) >= limit:
+                    break
+
+            return results
+            
     @staticmethod
     def _actor_to_dict(
         actor: Actor,

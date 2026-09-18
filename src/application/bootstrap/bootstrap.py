@@ -53,6 +53,10 @@ from infrastructure.database import (
     PostgreSQLActivityRepository,
 )
 
+from engines.communication.infrastructure.repositories import (
+    PostgreSQLCommunicationRepository,
+)
+
 from application.meetings import (
     MeetingTranscriptService,
 )
@@ -110,6 +114,7 @@ def bootstrap(
     """
     settings = get_settings()
     repository = PostgreSQLKnowledgeRepository()
+    communication_repository = PostgreSQLCommunicationRepository()
     activity_repository = PostgreSQLActivityRepository()
     meeting_transcript_repository = (
         PostgreSQLMeetingTranscriptRepository()
@@ -215,6 +220,8 @@ def bootstrap(
     
     reasoning = SimpleReasoningService(
         repository,
+        communication_repository=communication_repository,
+        llm_client=llm_client,
         ranker=KeywordRanker(),
     )
 
