@@ -90,6 +90,7 @@ class SlackSocketListener:
             responder=self._responder,
             connector=self._connector,
             conversation_repository=self._conversation_repository,
+            identity_service=self._identity_service,
         )
 
         self._register_handlers()

@@ -60,6 +60,40 @@ class SimpleReasoningService(
         return start_time, end_time
         return start_time, end_time
 
+    def _build_retrieval_query(
+        self,
+        question: Question,
+    ) -> str:
+        """
+        Build the query used for communication retrieval.
+
+        The original question is preserved for the final
+        answer generation. When a target person is explicitly
+        identified, their name is removed from the retrieval
+        query because actor_id already performs the identity
+        filtering.
+        """
+
+        query = question.text
+
+        target_name = (
+            question.target_user_name
+            if question.target_user_id is not None
+            else None
+        )
+
+        if target_name:
+            import re
+
+            query = re.sub(
+                rf"\b{re.escape(target_name)}\b",
+                "",
+                query,
+                flags=re.IGNORECASE,
+            )
+
+        return " ".join(query.split())
+
     def answer(
         self,
         question: Question,
@@ -76,12 +110,16 @@ class SimpleReasoningService(
         if "today" in question_text:
             start_time, end_time = self._today_window()
         communications = self._communication_repository.search(
-            query=question.text,
+            query=self._build_retrieval_query(question),
             limit=20,
             actor_id=(
-                question.context.user_id
-                if question.context is not None
-                else None
+                question.target_user_id
+                if question.target_user_id is not None
+                else (
+                    question.context.user_id
+                    if question.context is not None
+                    else None
+                )
             ),
             exclude_questions=True,
             start_time=start_time,
