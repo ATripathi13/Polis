@@ -86,18 +86,73 @@ class SimpleReasoningService(
         question_text: str,
     ) -> tuple[datetime | None, datetime | None]:
         """
-        Resolve explicit relative date references.
+        Resolve relative and explicit calendar date references.
         """
 
         now = datetime.now(cls.TIMEZONE)
 
-        if "today" in question_text:
+        normalized = question_text.lower().strip()
+
+        if "today" in normalized:
             return cls._date_window(now.date())
 
-        if "yesterday" in question_text:
+        if "yesterday" in normalized:
             return cls._date_window(
                 now.date() - timedelta(days=1)
             )
+
+        explicit_date_patterns = (
+            r"\b(\d{1,2})(?:st|nd|rd|th)?\s+"
+            r"(january|february|march|april|may|june|july|august|"
+            r"september|october|november|december)\b",
+
+            r"\b(january|february|march|april|may|june|july|august|"
+            r"september|october|november|december)\s+"
+            r"(\d{1,2})(?:st|nd|rd|th)?\b",
+        )
+
+        for pattern in explicit_date_patterns:
+            match = re.search(pattern, normalized)
+
+            if not match:
+                continue
+
+            month_names = {
+                "january": 1,
+                "february": 2,
+                "march": 3,
+                "april": 4,
+                "may": 5,
+                "june": 6,
+                "july": 7,
+                "august": 8,
+                "september": 9,
+                "october": 10,
+                "november": 11,
+                "december": 12,
+            }
+
+            first, second = match.groups()
+
+            if first.isdigit():
+                day = int(first)
+                month = month_names[second]
+            else:
+                month = month_names[first]
+                day = int(second)
+
+            year = now.year
+
+            try:
+                target_date = date(
+                    year,
+                    month,
+                    day,
+                )
+            except ValueError:
+                return None, None
+
+            return cls._date_window(target_date)
 
         return None, None
 
@@ -110,14 +165,14 @@ class SimpleReasoningService(
         question: Question,
     ) -> str:
         """
-        Build the query used for communication retrieval.
+        Build the semantic query used for communication retrieval.
 
-        The original question is preserved for final answer
-        generation.
+        Date expressions are handled separately by the date window,
+        so they are removed from the retrieval query.
 
         When a target person is explicitly identified,
-        their name is removed from the retrieval query because
-        actor_id already performs the identity filtering.
+        their name is removed because actor_id already performs
+        the identity filtering.
         """
 
         query = question.text
@@ -135,6 +190,26 @@ class SimpleReasoningService(
                 query,
                 flags=re.IGNORECASE,
             )
+
+        # Remove explicit calendar date expressions because
+        # start_time/end_time already constrain the date.
+        query = re.sub(
+            r"\b\d{1,2}(?:st|nd|rd|th)?\s+"
+            r"(?:january|february|march|april|may|june|july|august|"
+            r"september|october|november|december)\b",
+            "",
+            query,
+            flags=re.IGNORECASE,
+        )
+
+        query = re.sub(
+            r"\b(?:january|february|march|april|may|june|july|august|"
+            r"september|october|november|december)\s+"
+            r"\d{1,2}(?:st|nd|rd|th)?\b",
+            "",
+            query,
+            flags=re.IGNORECASE,
+        )
 
         return " ".join(query.split())
 
