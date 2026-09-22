@@ -4,7 +4,9 @@ Simple organizational reasoning service.
 
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta
+import re
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from domain.reasoning.value_objects import (
     Answer,
@@ -19,8 +21,6 @@ from infrastructure.llm import (
     OpenRouterClient,
 )
 
-from datetime import datetime, time
-from zoneinfo import ZoneInfo
 
 class SimpleReasoningService(
     QuestionAnsweringService,
@@ -29,6 +29,8 @@ class SimpleReasoningService(
     Answers questions using persisted organizational
     communication memory.
     """
+
+    TIMEZONE = ZoneInfo("Asia/Kolkata")
 
     def __init__(
         self,
@@ -42,23 +44,66 @@ class SimpleReasoningService(
         self._communication_repository = communication_repository
         self._llm_client = llm_client
 
-    @staticmethod
-    def _today_window() -> tuple[datetime, datetime]:
-        timezone = ZoneInfo("Asia/Kolkata")
+    # ==========================================================
+    # DATE / TIME
+    # ==========================================================
 
-        now = datetime.now(timezone)
-        today = now.date()
+    @classmethod
+    def _date_window(
+        cls,
+        target_date: date,
+    ) -> tuple[datetime, datetime]:
+        """
+        Return the start and end of a calendar day
+        in the organizational timezone.
+        """
 
         start_time = datetime.combine(
-            today,
+            target_date,
             time.min,
-            tzinfo=timezone,
+            tzinfo=cls.TIMEZONE,
         )
 
         end_time = start_time + timedelta(days=1)
 
         return start_time, end_time
-        return start_time, end_time
+
+    @classmethod
+    def _today_window(
+        cls,
+    ) -> tuple[datetime, datetime]:
+        """
+        Return today's calendar window.
+        """
+
+        now = datetime.now(cls.TIMEZONE)
+
+        return cls._date_window(now.date())
+
+    @classmethod
+    def _resolve_date_window(
+        cls,
+        question_text: str,
+    ) -> tuple[datetime | None, datetime | None]:
+        """
+        Resolve explicit relative date references.
+        """
+
+        now = datetime.now(cls.TIMEZONE)
+
+        if "today" in question_text:
+            return cls._date_window(now.date())
+
+        if "yesterday" in question_text:
+            return cls._date_window(
+                now.date() - timedelta(days=1)
+            )
+
+        return None, None
+
+    # ==========================================================
+    # RETRIEVAL
+    # ==========================================================
 
     def _build_retrieval_query(
         self,
@@ -67,11 +112,12 @@ class SimpleReasoningService(
         """
         Build the query used for communication retrieval.
 
-        The original question is preserved for the final
-        answer generation. When a target person is explicitly
-        identified, their name is removed from the retrieval
-        query because actor_id already performs the identity
-        filtering.
+        The original question is preserved for final answer
+        generation.
+
+        When a target person is explicitly identified,
+        their name is removed from the retrieval query because
+        actor_id already performs the identity filtering.
         """
 
         query = question.text
@@ -83,8 +129,6 @@ class SimpleReasoningService(
         )
 
         if target_name:
-            import re
-
             query = re.sub(
                 rf"\b{re.escape(target_name)}\b",
                 "",
@@ -94,6 +138,259 @@ class SimpleReasoningService(
 
         return " ".join(query.split())
 
+    # ==========================================================
+    # QUESTION CLASSIFICATION
+    # ==========================================================
+
+    @staticmethod
+    def _is_working_on_question(
+        question_text: str,
+    ) -> bool:
+        """
+        Detect questions asking what a person is working on.
+        """
+
+        normalized = " ".join(
+            question_text.lower().strip().split()
+        )
+
+        patterns = (
+            "what am i working on",
+            "what am i working on today",
+            "what is working on",
+            "what is currently working on",
+            "what are you working on",
+            "what are they working on",
+            "what is he working on",
+            "what is she working on",
+            "what are they working on today",
+            "what is he working on today",
+            "what is she working on today",
+        )
+
+        if any(
+            pattern in normalized
+            for pattern in patterns
+        ):
+            return True
+
+        # Covers:
+        #
+        # What is Akshat working on today?
+        # What is Nav working on?
+        #
+        if re.search(
+            r"^what is .+ working on(?: today)?$",
+            normalized,
+        ):
+            return True
+
+        return False
+
+    # ==========================================================
+    # LLM RESPONSE VALIDATION
+    # ==========================================================
+
+    @staticmethod
+    def _is_invalid_llm_response(
+        response: str,
+    ) -> bool:
+        """
+        Detect responses that are not actual answers.
+
+        The currently configured OpenRouter free route has
+        returned safety metadata such as:
+
+            User Safety: safe
+
+        That must never be exposed to the user as the answer.
+        """
+
+        if not response:
+            return True
+
+        normalized = " ".join(
+            response.strip().split()
+        ).lower()
+
+        if not normalized:
+            return True
+
+        invalid_exact_responses = {
+            "user safety: safe",
+            "user safety - safe",
+            "user safety safe",
+            "safety: safe",
+            "safety - safe",
+            "safe",
+        }
+
+        if normalized in invalid_exact_responses:
+            return True
+
+        # Protect against a response where the safety marker
+        # appears by itself before/after whitespace.
+        if re.fullmatch(
+            r"(?:user\s+safety\s*[:\-]\s*)?safe[.!]?",
+            normalized,
+        ):
+            return True
+
+        return False
+
+    # ==========================================================
+    # DETERMINISTIC FALLBACK
+    # ==========================================================
+
+    @staticmethod
+    def _deduplicate_evidence(
+        evidence: list[str],
+    ) -> list[str]:
+        """
+        Remove duplicate communication bodies while preserving
+        their original order.
+        """
+
+        result: list[str] = []
+        seen: set[str] = set()
+
+        for item in evidence:
+            normalized = " ".join(
+                item.lower().split()
+            )
+
+            if not normalized:
+                continue
+
+            if normalized in seen:
+                continue
+
+            seen.add(normalized)
+            result.append(item.strip())
+
+        return result
+
+    def _build_working_on_fallback(
+        self,
+        question: Question,
+        evidence: list[str],
+    ) -> str:
+        """
+        Build a deterministic answer for 'working on' questions
+        when the LLM returns an unusable response.
+
+        This answer is based only on the retrieved communications.
+        """
+
+        evidence = self._deduplicate_evidence(
+            evidence
+        )
+
+        if not evidence:
+            return self._no_information_text(
+                question
+            )
+
+        person_name = (
+            question.target_user_name
+            if question.target_user_id is not None
+            else None
+        )
+
+        # ------------------------------------------------------
+        # Extract the work topic from common first-person forms.
+        # ------------------------------------------------------
+
+        topics: list[str] = []
+
+        for item in evidence:
+            text = item.strip()
+
+            patterns = (
+                r"\bi am working on\s+(.+?)(?:[.!?]|$)",
+                r"\bworking on\s+(.+?)(?:[.!?]|$)",
+                r"\bi'm working on\s+(.+?)(?:[.!?]|$)",
+                r"\bi am currently working on\s+(.+?)(?:[.!?]|$)",
+                r"\bcurrently working on\s+(.+?)(?:[.!?]|$)",
+            )
+
+            for pattern in patterns:
+                match = re.search(
+                    pattern,
+                    text,
+                    flags=re.IGNORECASE,
+                )
+
+                if match:
+                    topic = match.group(1).strip()
+
+                    if topic:
+                        topics.append(topic)
+
+                    break
+
+        topics = self._deduplicate_evidence(
+            topics
+        )
+
+        if topics:
+            topic_text = ", ".join(topics)
+
+            if person_name:
+                return (
+                    f"{person_name} is working on "
+                    f"{topic_text} today."
+                )
+
+            return (
+                f"You're working on "
+                f"{topic_text} today."
+            )
+
+        # ------------------------------------------------------
+        # If we cannot extract a clean topic, return the actual
+        # communication instead of inventing an answer.
+        # ------------------------------------------------------
+
+        if person_name:
+            return (
+                f"{person_name} said: "
+                f"\"{evidence[0]}\""
+            )
+
+        return (
+            f"You said: "
+            f"\"{evidence[0]}\""
+        )
+
+    @staticmethod
+    def _no_information_text(
+        question: Question,
+    ) -> str:
+        """
+        Return a target-aware no-information response.
+        """
+
+        if question.target_user_id is not None:
+            person_name = (
+                question.target_user_name
+                or "that person"
+            )
+
+            return (
+                f"I don't have enough information to tell "
+                f"what {person_name} is working on today."
+            )
+
+        return (
+            "I don't have enough information to tell "
+            "what you're working on today."
+        )
+
+    # ==========================================================
+    # MAIN ANSWER
+    # ==========================================================
+
     def answer(
         self,
         question: Question,
@@ -102,89 +399,200 @@ class SimpleReasoningService(
         Answer a question using persisted organizational
         communication events.
         """
-        start_time = None
-        end_time = None
 
-        question_text = question.text.lower()
-
-        if "today" in question_text:
-            start_time, end_time = self._today_window()
-        communications = self._communication_repository.search(
-            query=self._build_retrieval_query(question),
-            limit=20,
-            actor_id=(
-                question.target_user_id
-                if question.target_user_id is not None
-                else (
-                    question.context.user_id
-                    if question.context is not None
-                    else None
-                )
-            ),
-            exclude_questions=True,
-            start_time=start_time,
-            end_time=end_time,
+        question_text = (
+            question.text.lower().strip()
         )
 
-        if "today" in question_text and not communications:
+        # ------------------------------------------------------
+        # DATE WINDOW
+        # ------------------------------------------------------
+
+        start_time, end_time = (
+            self._resolve_date_window(
+                question_text
+            )
+        )
+
+        # ------------------------------------------------------
+        # ACTOR FILTER
+        # ------------------------------------------------------
+
+        actor_id = None
+
+        if question.target_user_id is not None:
+            actor_id = question.target_user_id
+
+        elif question.context is not None:
+            actor_id = question.context.user_id
+
+        # ------------------------------------------------------
+        # RETRIEVE COMMUNICATIONS
+        # ------------------------------------------------------
+
+        retrieval_query = (
+            self._build_retrieval_query(
+                question
+            )
+        )
+
+        communications = (
+            self._communication_repository.search(
+                query=retrieval_query,
+                limit=20,
+                actor_id=actor_id,
+                exclude_questions=True,
+                start_time=start_time,
+                end_time=end_time,
+            )
+        )
+
+        # ------------------------------------------------------
+        # BUILD EVIDENCE
+        # ------------------------------------------------------
+
+        evidence: list[str] = []
+
+        for communication in communications:
+            body = (
+                communication.content.body.strip()
+            )
+
+            if body:
+                evidence.append(body)
+
+        evidence = self._deduplicate_evidence(
+            evidence
+        )
+
+        # ------------------------------------------------------
+        # NO DATA
+        # ------------------------------------------------------
+
+        if not evidence:
+            if (
+                "today" in question_text
+                and self._is_working_on_question(
+                    question_text
+                )
+            ):
+                return Answer(
+                    text=self._no_information_text(
+                        question
+                    ),
+                    confidence=0.0,
+                    evidence=[],
+                )
+
             return Answer(
-                text="I don't have enough information to tell what you're working on today.",
+                text=(
+                    "Sorry, I don't know the answer to "
+                    "that question. I will keep learning "
+                    "and try to answer it in the future."
+                ),
                 confidence=0.0,
                 evidence=[],
             )
 
-        if communications:
-            evidence = []
+        # ------------------------------------------------------
+        # BUILD LLM CONTEXT
+        # ------------------------------------------------------
 
-            for communication in communications:
-                body = communication.content.body.strip()
+        context = "\n".join(
+            f"- {item}"
+            for item in evidence
+        )
 
-                if body:
-                    evidence.append(body)
+        prompt = f"""
+You are POLIS, an organizational intelligence assistant.
 
-            if evidence:
-                context = "\n".join(
-                    f"- {item}"
-                    for item in evidence
+Answer the user's question using ONLY the organizational
+communications provided below.
+
+User question:
+{question.text}
+
+Relevant organizational communications:
+{context}
+
+Instructions:
+- Answer the question directly.
+- Synthesize multiple relevant communications when necessary.
+- Do not invent facts.
+- Never mention organizational communications, memory, retrieval, evidence, databases, sources, internal systems, safety checks, or model behavior.
+- Never output safety classifications or moderation metadata.
+- Do not output labels such as "User Safety: safe".
+- Answer naturally and directly, as POLIS already knows the relevant organizational context.
+- If the evidence does not contain enough information, say so clearly.
+- Keep the answer concise and natural.
+- Return ONLY the answer to the user's question.
+""".strip()
+
+        # ------------------------------------------------------
+        # LLM GENERATION
+        # ------------------------------------------------------
+
+        try:
+            answer_text = (
+                self._llm_client.generate(
+                    prompt
                 )
+            )
+        except Exception:
+            answer_text = ""
 
-                prompt = f"""
-        You are POLIS, an organizational intelligence assistant.
+        # ------------------------------------------------------
+        # VALID LLM ANSWER
+        # ------------------------------------------------------
 
-        Answer the user's question using ONLY the organizational
-        communications provided below.
+        if (
+            answer_text
+            and not self._is_invalid_llm_response(
+                answer_text
+            )
+        ):
+            return Answer(
+                text=answer_text.strip(),
+                confidence=0.8,
+                evidence=evidence,
+            )
 
-        User question:
-        {question.text}
+        # ------------------------------------------------------
+        # DETERMINISTIC FALLBACK
+        #
+        # Especially important for:
+        #
+        # "What is Akshat working on today?"
+        #
+        # If OpenRouter/free returns:
+        #
+        # "User Safety: safe"
+        #
+        # we do NOT send that to Slack.
+        # ------------------------------------------------------
 
-        Relevant organizational communications:
-        {context}
+        if self._is_working_on_question(
+            question_text
+        ):
+            return Answer(
+                text=self._build_working_on_fallback(
+                    question,
+                    evidence,
+                ),
+                confidence=0.7,
+                evidence=evidence,
+            )
 
-        Instructions:
-        - Answer the question directly.
-        - Synthesize multiple relevant communications when necessary.
-        - Do not invent facts.
-        - Never mention organizational communications, memory, retrieval, evidence, databases, sources, or internal systems.
-        - Answer naturally and directly, as POLIS already knows the relevant organizational context.
-        - If the evidence does not contain enough information, say so clearly.
-        - Keep the answer concise and natural.
-        """
-
-                answer_text = self._llm_client.generate(
-                    prompt.strip(),
-                )
-
-                if answer_text.strip():
-                    return Answer(
-                        text=answer_text.strip(),
-                        confidence=0.8,
-                        evidence=evidence,
-                    )
+        # ------------------------------------------------------
+        # GENERIC FALLBACK
+        # ------------------------------------------------------
 
         return Answer(
             text=(
-                "Sorry, I don't know the answer to that question. "
-                "I will keep learning and try to answer it in the future."
+                "I found relevant information, "
+                "but I couldn't generate a reliable "
+                "answer from it."
             ),
             confidence=0.0,
+            evidence=evidence,
         )
