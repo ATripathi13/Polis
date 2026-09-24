@@ -176,7 +176,13 @@ class SimpleReasoningService(
         """
 
         query = question.text
-
+        # Remove explicit Slack user mentions because
+        # actor_id already performs the identity filtering.
+        query = re.sub(
+            r"<@[A-Z0-9]+(?:\|[^>]+)?>",
+            "",
+            query,
+        )
         target_name = (
             question.target_user_name
             if question.target_user_id is not None

@@ -151,12 +151,37 @@ class SlackIntentRouter:
 
         users = self._identity_service.get_workspace_users()
 
+        # ------------------------------------------------------
+        # EXPLICIT SLACK USER MENTION
+        # ------------------------------------------------------
+
+        mention_match = re.search(
+            r"<@([A-Z0-9]+)(?:\|[^>]+)?>",
+            text,
+        )
+
+        if mention_match:
+            mentioned_user_id = mention_match.group(1)
+
+            for user in users:
+                if user.get("id") != mentioned_user_id:
+                    continue
+
+                display_name = (
+                    user.get("profile", {})
+                    .get("display_name")
+                    or user.get("real_name")
+                    or user.get("name")
+                    or mentioned_user_id
+                )
+
+                return {
+                    "id": mentioned_user_id,
+                    "name": display_name,
+                }
         matches: list[dict] = []
 
         for user in users:
-            if user.get("deleted"):
-                continue
-
             display_name = (
                 user.get("profile", {})
                 .get("display_name")
