@@ -67,6 +67,112 @@ class KnowledgeRecordModel(Base):
         nullable=False,
     )
 
+class KnowledgeBaseDocumentModel(Base):
+    __tablename__ = "knowledge_base_documents"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(500),
+        nullable=False,
+    )
+
+    mime_type: Mapped[str] = mapped_column(
+        String(150),
+        nullable=False,
+    )
+
+    object_key: Mapped[str] = mapped_column(
+        String(1000),
+        unique=True,
+        index=True,
+        nullable=False,
+    )
+
+    checksum: Mapped[str] = mapped_column(
+        String(128),
+        unique=True,
+        index=True,
+        nullable=False,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default="PENDING",
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    metadata_: Mapped[dict] = mapped_column(
+        "metadata",
+        JSONB,
+        default=dict,
+        nullable=False,
+    )
+
+
+class KnowledgeBaseChunkModel(Base):
+    __tablename__ = "knowledge_base_chunks"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+
+    document_id: Mapped[str] = mapped_column(
+        String(36),
+        index=True,
+        nullable=False,
+    )
+
+    chunk_index: Mapped[int] = mapped_column(
+        nullable=False,
+    )
+
+    content: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+
+    page_number: Mapped[int | None] = mapped_column(
+        nullable=True,
+    )
+
+    section_title: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    qdrant_point_id: Mapped[str] = mapped_column(
+        String(100),
+        unique=True,
+        index=True,
+        nullable=False,
+    )
+
+    metadata_: Mapped[dict] = mapped_column(
+        "metadata",
+        JSONB,
+        default=dict,
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
 
 class ActivityEventModel(Base):
     __tablename__ = "activity_events"

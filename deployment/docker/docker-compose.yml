@@ -51,10 +51,10 @@ services:
     command:
       - python
       - /app/run_slack_listener.py
-    
+
     healthcheck:
       disable: true
-    
+
     env_file:
       - .env.docker
 
@@ -96,6 +96,8 @@ services:
     environment:
       QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
 
+    ports:
+      - "6334:6333"
     volumes:
       - polis_qdrant_data:/qdrant/storage
 
@@ -121,6 +123,10 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+
+    ports:
+      - "${MINIO_PORT}:9000"
+      - "${MINIO_CONSOLE_PORT}:9001"
 
     volumes:
       - polis_minio_data:/data

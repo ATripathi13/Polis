@@ -4,14 +4,17 @@ Application bootstrap.
 
 from __future__ import annotations
 
-from infrastructure.llm import (
-    OpenRouterClient,
-)
 
 from infrastructure.llm.knowledge_understanding import (
     LLMKnowledgeUnderstanding,
 )
+from infrastructure.vector import (
+    QdrantKnowledgeBaseRepository,
+)
 
+from infrastructure.storage import (
+    MinIOKnowledgeBaseStorage,
+)
 from application.cognitive import (
     SimpleCognitiveEngine,
 )
@@ -105,6 +108,15 @@ from infrastructure.meetings.microsoft_graph_token_provider import (
 from infrastructure.meetings.microsoft_teams_transcript_provider import (
     MicrosoftTeamsTranscriptProvider,
 )
+from infrastructure.llm import (
+    OpenRouterClient,
+    LocalEmbeddingClient,
+)
+
+from application.knowledge_base import (
+    KnowledgeBaseRetrievalService,
+    KnowledgeBaseAnswerService,
+)
 
 def bootstrap(
 ) -> ApplicationContainer:
@@ -176,6 +188,15 @@ def bootstrap(
 
     llm_client = OpenRouterClient()
 
+    knowledge_base_retrieval = KnowledgeBaseRetrievalService(
+        vector_repository=QdrantKnowledgeBaseRepository(),
+        embedding_client=LocalEmbeddingClient(),
+    )
+
+    knowledge_base_answer = KnowledgeBaseAnswerService(
+        llm_client=llm_client,
+    )
+
     knowledge_understanding = (
         LLMKnowledgeUnderstanding(
             llm_client,
@@ -239,6 +260,8 @@ def bootstrap(
         pipeline,
         reasoning,
         activity_question_service,
+        knowledge_base_retrieval_service=knowledge_base_retrieval,
+        knowledge_base_answer_service=knowledge_base_answer,
     )
     return ApplicationContainer(
         engine=engine,

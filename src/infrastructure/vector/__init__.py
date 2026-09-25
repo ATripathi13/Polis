@@ -1,3 +1,7 @@
-from __future__ import annotations
+from .qdrant_knowledge_base_repository import (
+    QdrantKnowledgeBaseRepository,
+)
 
-__all__ = []
+__all__ = [
+    "QdrantKnowledgeBaseRepository",
+]

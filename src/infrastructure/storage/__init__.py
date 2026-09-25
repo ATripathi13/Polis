@@ -1,3 +1,7 @@
-from __future__ import annotations
+from .minio_knowledge_base_storage import (
+    MinIOKnowledgeBaseStorage,
+)
 
-__all__ = []
+__all__ = [
+    "MinIOKnowledgeBaseStorage",
+]

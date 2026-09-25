@@ -73,6 +73,10 @@ class Settings(BaseSettings):
     minio_endpoint: str = Field(alias="MINIO_ENDPOINT")
     minio_access_key: str = Field(alias="MINIO_ACCESS_KEY")
     minio_secret_key: str = Field(alias="MINIO_SECRET_KEY")
+    minio_bucket: str = Field(
+        default="polis-knowledge-base",
+        alias="MINIO_BUCKET",
+    )
 
     # ==========================================================
     # Security
@@ -123,6 +127,10 @@ class Settings(BaseSettings):
     openrouter_base_url: str = Field(
         default="https://openrouter.ai/api/v1",
         alias="OPENROUTER_BASE_URL",
+    )
+    knowledge_base_embedding_model: str = Field(
+        default="openai/text-embedding-3-small",
+        alias="KNOWLEDGE_BASE_EMBEDDING_MODEL",
     )
 
 @lru_cache(maxsize=1)
