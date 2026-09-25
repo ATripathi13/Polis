@@ -126,7 +126,6 @@ services:
 
     ports:
       - "${MINIO_PORT}:9000"
-      - "${MINIO_CONSOLE_PORT}:9001"
 
     volumes:
       - polis_minio_data:/data
