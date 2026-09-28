@@ -67,3 +67,60 @@ class SlackClient:
                     "Unknown Slack error",
                 )
             )
+    def get_file_info(
+        self,
+        file_id: str,
+    ) -> dict:
+        """
+        Retrieve metadata for a Slack file.
+        """
+        headers = {
+            "Authorization": (
+                f"Bearer {self._token}"
+            ),
+        }
+
+        response = requests.get(
+            "https://slack.com/api/files.info",
+            headers=headers,
+            params={
+                "file": file_id,
+            },
+            timeout=30,
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        if not data.get("ok"):
+            raise RuntimeError(
+                data.get(
+                    "error",
+                    "Failed to retrieve Slack file.",
+                )
+            )
+
+        return data["file"]
+    def download_file(
+        self,
+        file_url: str,
+    ) -> bytes:
+        """
+        Download a Slack-hosted file using the bot token.
+        """
+        headers = {
+            "Authorization": (
+                f"Bearer {self._token}"
+            ),
+        }
+
+        response = requests.get(
+            file_url,
+            headers=headers,
+            timeout=60,
+        )
+
+        response.raise_for_status()
+
+        return response.content

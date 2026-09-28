@@ -32,6 +32,11 @@ from application.meetings import (
 from domain.meetings import (
     TeamsSubscriptionRepository,
 )
+
+from application.knowledge_base import (
+    KnowledgeBaseIngestionService,
+)
+
 @dataclass(slots=True)
 class ApplicationContainer:
     """
@@ -40,6 +45,7 @@ class ApplicationContainer:
 
     engine: SimpleCognitiveEngine
 
+    knowledge_base_ingestion_service: KnowledgeBaseIngestionService
     repository: KnowledgeRepository
 
     activity_service: ActivityService

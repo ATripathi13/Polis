@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 import os
-
+import asyncio
 from slack_bolt.app.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 
@@ -37,6 +37,13 @@ from api.dependencies import (
 )
 from infrastructure.config.settings import get_settings
 
+from application.knowledge_base import (
+    KnowledgeBaseIngestionService,
+)
+
+from pathlib import Path
+import tempfile
+
 logger = logging.getLogger(__name__)
 
 
@@ -53,9 +60,13 @@ class SlackSocketListener:
         app_token: str,
         slack_service: SlackService,
         activity_processor: ActivityProcessor,
+        knowledge_base_ingestion_service: KnowledgeBaseIngestionService | None = None,
     ) -> None:
         self._slack_service = slack_service
         self._activity_processor = activity_processor
+        self._knowledge_base_ingestion_service = (
+            knowledge_base_ingestion_service
+        )
         self._identity_service = SlackIdentityService()
 
         os.environ.pop("SLACK_CLIENT_ID", None)
@@ -79,8 +90,10 @@ class SlackSocketListener:
             activity_processor=activity_processor,
         )
 
+        self._slack_client = SlackClient()
+
         self._responder = SlackResponder(
-            SlackClient(),
+            self._slack_client,
         )
 
         self._conversation_repository = get_conversation_repository()
@@ -102,8 +115,8 @@ class SlackSocketListener:
             if event.get("bot_id"):
                 return
 
-            # Ignore message subtypes such as joins, edits, etc.
-            if event.get("subtype"):
+            # Ignore message subtypes except file shares.
+            if event.get("subtype") and event.get("subtype") != "file_share":
                 return
 
             user_id = event.get("user")
@@ -111,6 +124,7 @@ class SlackSocketListener:
             text = event.get("text", "")
             ts = event.get("ts")
             thread_ts = event.get("thread_ts")
+            files = event.get("files", [])
 
             if not user_id or not channel_id or not ts:
                 return
@@ -245,6 +259,144 @@ class SlackSocketListener:
                     },
                 )
                 return
+            # ======================================================
+            # Knowledge Base file ingestion.
+            #
+            # A file is ingested only when POLIS is explicitly
+            # mentioned in the same Slack message.
+            # ======================================================
+
+            if files and self._knowledge_base_ingestion_service is not None:
+                supported_mime_types = {
+                    ".pdf": "application/pdf",
+                    ".docx": (
+                        "application/vnd.openxmlformats-officedocument."
+                        "wordprocessingml.document"
+                    ),
+                    ".txt": "text/plain",
+                    ".md": "text/markdown",
+                }
+
+                for file_info in files:
+                    file_id = file_info.get("id")
+
+                    if not file_id:
+                        continue
+
+                    file_name = (
+                        file_info.get("name")
+                        or f"slack-{file_id}"
+                    )
+
+                    try:
+                        slack_file = (
+                            self._slack_client.get_file_info(
+                                file_id
+                            )
+                        )
+
+                        file_name = (
+                            slack_file.get("name")
+                            or file_info.get("name")
+                            or f"slack-{file_id}"
+                        )
+
+                        file_path_name = Path(
+                            file_name
+                        ).name
+
+                        suffix = Path(
+                            file_path_name
+                        ).suffix.lower()
+
+                        mime_type = supported_mime_types.get(
+                            suffix
+                        )
+
+                        if mime_type is None:
+                            self._responder.reply(
+                                channel=channel_id,
+                                thread_ts=thread_ts or ts,
+                                text=(
+                                    f"I can't ingest "
+                                    f"`{file_path_name}`. "
+                                    "Supported formats are PDF, "
+                                    "DOCX, TXT, and Markdown."
+                                ),
+                            )
+                            continue
+
+                        download_url = (
+                            slack_file.get(
+                                "url_private_download"
+                            )
+                            or slack_file.get(
+                                "url_private"
+                            )
+                        )
+
+                        if not download_url:
+                            raise RuntimeError(
+                                "Slack file has no download URL."
+                            )
+
+                        file_data = (
+                            self._slack_client.download_file(
+                                download_url
+                            )
+                        )
+
+                        with tempfile.TemporaryDirectory() as temp_dir:
+                            temp_path = (
+                                Path(temp_dir)
+                                / file_path_name
+                            )
+
+                            temp_path.write_bytes(
+                                file_data
+                            )
+
+                            document = await asyncio.to_thread(
+                                self
+                                ._knowledge_base_ingestion_service
+                                .ingest,
+                                temp_path,
+                                name=file_path_name,
+                                mime_type=mime_type,
+                            )
+
+                        self._responder.reply(
+                            channel=channel_id,
+                            thread_ts=thread_ts or ts,
+                            text=(
+                                f"Knowledge Base updated successfully "
+                                f"with `{file_path_name}`."
+                                f"\nStatus: {document.status}"
+                            ),
+                        )
+
+                    except Exception:
+                        logger.exception(
+                            "Failed to ingest Slack file",
+                            extra={
+                                "file_id": file_id,
+                                "channel_id": channel_id,
+                                "user_id": user_id,
+                            },
+                        )
+
+                        self._responder.reply(
+                            channel=channel_id,
+                            thread_ts=thread_ts or ts,
+                            text=(
+                                f"I couldn't ingest "
+                                f"`{file_name}`. "
+                                "Please check that the file is readable "
+                                "and try again."
+                            ),
+                        )
+
+                return
             clean_text = text.replace(mention_token, "").strip()
 
             activity_message = ActivitySlackMessage(
@@ -257,7 +409,7 @@ class SlackSocketListener:
                 user_name=activity_message.user_name,
                 metadata=activity_message.metadata,
             )
-            
+
             try:
                 self._intent_router.handle(
                     activity_message,

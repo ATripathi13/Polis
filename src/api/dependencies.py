@@ -170,6 +170,11 @@ def get_activity_processor() -> ActivityProcessor:
 
     return _application.activity_processor
 
+def get_knowledge_base_ingestion_service():
+    """
+    Return the shared Knowledge Base ingestion service.
+    """
+    return _application.knowledge_base_ingestion_service
 
 def get_activity_question_service() -> ActivityQuestionService:
     """

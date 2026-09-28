@@ -114,8 +114,19 @@ from infrastructure.llm import (
 )
 
 from application.knowledge_base import (
+    KnowledgeBaseIngestionService,
     KnowledgeBaseRetrievalService,
     KnowledgeBaseAnswerService,
+)
+
+from infrastructure.database import (
+    PostgreSQLKnowledgeBaseDocumentRepository,
+    PostgreSQLKnowledgeBaseChunkRepository,
+)
+
+from infrastructure.documents import (
+    DocumentParser,
+    DocumentChunker,
 )
 
 def bootstrap(
@@ -188,9 +199,41 @@ def bootstrap(
 
     llm_client = OpenRouterClient()
 
-    knowledge_base_retrieval = KnowledgeBaseRetrievalService(
-        vector_repository=QdrantKnowledgeBaseRepository(),
-        embedding_client=LocalEmbeddingClient(),
+    knowledge_base_vector_repository = (
+        QdrantKnowledgeBaseRepository()
+    )
+
+    knowledge_base_embedding_client = (
+        LocalEmbeddingClient()
+    )
+
+    knowledge_base_retrieval = (
+        KnowledgeBaseRetrievalService(
+            vector_repository=knowledge_base_vector_repository,
+            embedding_client=knowledge_base_embedding_client,
+        )
+    )
+
+    knowledge_base_ingestion = (
+        KnowledgeBaseIngestionService(
+            document_repository=(
+                PostgreSQLKnowledgeBaseDocumentRepository()
+            ),
+            chunk_repository=(
+                PostgreSQLKnowledgeBaseChunkRepository()
+            ),
+            vector_repository=(
+                knowledge_base_vector_repository
+            ),
+            object_storage=(
+                MinIOKnowledgeBaseStorage()
+            ),
+            parser=DocumentParser(),
+            chunker=DocumentChunker(),
+            embedding_client=(
+                knowledge_base_embedding_client
+            ),
+        )
     )
 
     knowledge_base_answer = KnowledgeBaseAnswerService(
@@ -273,4 +316,5 @@ def bootstrap(
         meeting_transcript_provider=microsoft_teams_transcript_provider,
         teams_subscription_repository=teams_subscription_repository,
         teams_subscription_service=teams_subscription_service,
+        knowledge_base_ingestion_service=knowledge_base_ingestion,
     )
