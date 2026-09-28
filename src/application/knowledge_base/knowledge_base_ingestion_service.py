@@ -94,9 +94,34 @@ class KnowledgeBaseIngestionService:
             )
         )
 
+        requested_metadata = dict(
+            metadata or {}
+        )
+
         if existing is not None:
-            if existing.status == self.READY:
+
+            existing_metadata = dict(
+                existing.metadata or {}
+            )
+
+            if (
+                existing.status == self.READY
+                and existing_metadata
+                == requested_metadata
+            ):
                 return existing
+
+            self._vector_repository.delete_by_document(
+                existing.id
+            )
+
+            self._chunk_repository.delete_by_document(
+                existing.id
+            )
+
+            self._object_storage.delete(
+                existing.object_key
+            )
 
             self._document_repository.delete(
                 existing.id
@@ -108,9 +133,7 @@ class KnowledgeBaseIngestionService:
             or path.name
         )
 
-        document_metadata = dict(
-            metadata or {}
-        )
+        document_metadata = requested_metadata
 
         object_key = (
             f"documents/"
