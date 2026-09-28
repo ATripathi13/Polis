@@ -582,8 +582,14 @@ Instructions:
   use that identity when associating the information with them.
 - Do not invent facts.
 - Do not assume information that is not present.
-- Do not mention retrieval, embeddings, databases, memory,
-  internal systems, sources, or model behavior.
+- Never mention documents, provided information, evidence,
+  sources, retrieval, embeddings, databases, memory,
+  internal systems, or model behavior.
+- Do not say phrases such as "based on the provided information",
+  "the documents say", "I found", "the available information",
+  or similar source-referencing language.
+- If the knowledge does not establish the answer, simply state
+  that POLIS does not have enough information to answer.
 - Never output safety classifications or moderation metadata.
 - Keep the answer concise and natural.
 - If the provided information is insufficient, say so clearly.
