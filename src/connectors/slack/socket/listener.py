@@ -356,6 +356,22 @@ class SlackSocketListener:
                                 file_data
                             )
 
+                            is_employee_profile = (
+                                "employee profile"
+                                in text.replace(
+                                    mention_token,
+                                    "",
+                                ).lower()
+                            )
+
+                            document_metadata = {}
+
+                            if is_employee_profile:
+                                document_metadata = {
+                                    "knowledge_type": "employee_profile",
+                                    "employee_slack_user_id": user_id,
+                                }
+
                             document = await asyncio.to_thread(
                                 self
                                 ._knowledge_base_ingestion_service
@@ -363,6 +379,7 @@ class SlackSocketListener:
                                 temp_path,
                                 name=file_path_name,
                                 mime_type=mime_type,
+                                metadata=document_metadata,
                             )
 
                         self._responder.reply(

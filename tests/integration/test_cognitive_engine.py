@@ -60,6 +60,10 @@ from engines.knowledge.infrastructure.indexing import (
 from application.services.knowledge_acceptance_service import (
     KnowledgeAcceptanceService,
 )
+from engines.communication.infrastructure.repositories import (
+    InMemoryCommunicationRepository,
+)
+
 class FakeKnowledgeUnderstanding:
     def analyze(self, text):
         return {
@@ -129,8 +133,20 @@ def test_cognitive_engine():
         reasoning_service=None,
     )
 
+    communication_repository = (
+        InMemoryCommunicationRepository()
+    )
+
+    class FakeLLM:
+        def generate(self, prompt: str) -> str:
+            return "We use PostgreSQL."
+
     reasoning = SimpleReasoningService(
         repository=repository,
+        communication_repository=(
+            communication_repository
+        ),
+        llm_client=FakeLLM(),
         ranker=KeywordRanker(),
     )
 
@@ -157,10 +173,12 @@ def test_cognitive_engine():
             channel_type="slack",
         ),
         content=Content(
-            body="We use PostgreSQL.",
+            body="We use PostgreSQL as our database.",
         ),
     )
-
+    communication_repository.save(
+        communication
+    )
     engine.learn(
         communication,
     )

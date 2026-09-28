@@ -44,7 +44,11 @@ class KnowledgeBaseAnswerService:
             )
 
         context = "\n\n".join(
-            f"Source {index}:\n{chunk.content}"
+            (
+                f"Source {index}\n"
+                f"Document: {chunk.metadata.get('document_name', 'Unknown')}\n"
+                f"Content:\n{chunk.content}"
+            )
             for index, (chunk, _score) in enumerate(
                 results,
                 start=1,
@@ -66,6 +70,7 @@ Knowledge Base content:
 Instructions:
 - Answer the question directly.
 - Use only the provided Knowledge Base content.
+- When a source is an employee profile document and its document name identifies the employee, use that document identity to associate the profile information with that employee. Do not add facts that are not present in the profile.
 - Do not invent or assume facts.
 - Do not use general world knowledge.
 - If the provided content does not contain enough information,

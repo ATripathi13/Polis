@@ -68,6 +68,7 @@ class KnowledgeBaseIngestionService:
         *,
         name: str | None = None,
         mime_type: str,
+        metadata: dict | None = None,
     ) -> KnowledgeBaseDocument:
         """
         Ingest one document into the Knowledge Base.
@@ -107,6 +108,10 @@ class KnowledgeBaseIngestionService:
             or path.name
         )
 
+        document_metadata = dict(
+            metadata or {}
+        )
+
         object_key = (
             f"documents/"
             f"{document_id}/"
@@ -124,6 +129,7 @@ class KnowledgeBaseIngestionService:
             status=self.PROCESSING,
             created_at=now,
             updated_at=now,
+            metadata=document_metadata,
         )
 
         self._document_repository.save(
@@ -170,6 +176,7 @@ class KnowledgeBaseIngestionService:
                         section_title=chunk.section_title,
                         qdrant_point_id=qdrant_point_id,
                         metadata={
+                            **document_metadata,
                             "document_name": document_name,
                             "mime_type": mime_type,
                         },

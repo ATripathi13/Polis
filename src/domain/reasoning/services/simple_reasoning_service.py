@@ -468,6 +468,177 @@ class SimpleReasoningService(
             "what you're working on today."
         )
 
+    def retrieve_evidence(
+        self,
+        question: Question,
+    ) -> list[str]:
+        """
+        Retrieve relevant organizational communication evidence
+        without generating a final answer.
+        """
+
+        question_text = (
+            question.text.lower().strip()
+        )
+
+        start_time, end_time = (
+            self._resolve_date_window(
+                question_text
+            )
+        )
+
+        actor_id = None
+
+        if question.target_user_id is not None:
+            actor_id = question.target_user_id
+
+        elif question.context is not None:
+            actor_id = question.context.user_id
+
+        retrieval_query = (
+            self._build_retrieval_query(
+                question
+            )
+        )
+
+        communications = (
+            self._communication_repository.search(
+                query=retrieval_query,
+                limit=20,
+                actor_id=actor_id,
+                exclude_questions=True,
+                start_time=start_time,
+                end_time=end_time,
+            )
+        )
+
+        evidence: list[str] = []
+
+        for communication in communications:
+            body = (
+                communication.content.body.strip()
+            )
+
+            if body:
+                evidence.append(body)
+
+        return self._deduplicate_evidence(
+            evidence
+        )
+
+    def answer_from_evidence(
+        self,
+        question: Question,
+        evidence: list[str],
+        *,
+        fallback_evidence: list[str] | None = None,
+    ) -> Answer:
+        """
+        Generate a grounded answer from unified evidence.
+
+        Evidence may come from organizational communications,
+        Knowledge Base documents, or both.
+        """
+
+        evidence = self._deduplicate_evidence(
+            evidence
+        )
+
+        if not evidence:
+            return Answer(
+                text=self._no_information_text(
+                    question
+                ),
+                confidence=0.0,
+                evidence=[],
+            )
+
+        context = "\n".join(
+            f"- {item}"
+            for item in evidence
+        )
+
+        prompt = f"""
+You are POLIS, an organizational intelligence assistant.
+
+Answer the user's question using ONLY the relevant
+organizational knowledge provided below.
+
+User question:
+{question.text}
+
+Relevant organizational knowledge:
+{context}
+
+Instructions:
+- Answer the question directly.
+- Determine which provided information is actually relevant
+  to the user's question.
+- Synthesize multiple pieces of information when necessary.
+- Information may describe people, responsibilities,
+  projects, current work, processes, or other organizational
+  context.
+- When a document name or explicit identity identifies a person,
+  use that identity when associating the information with them.
+- Do not invent facts.
+- Do not assume information that is not present.
+- Do not mention retrieval, embeddings, databases, memory,
+  internal systems, sources, or model behavior.
+- Never output safety classifications or moderation metadata.
+- Keep the answer concise and natural.
+- If the provided information is insufficient, say so clearly.
+- Return ONLY the answer.
+""".strip()
+
+        try:
+            answer_text = (
+                self._llm_client.generate(
+                    prompt
+                )
+            )
+        except Exception:
+            answer_text = ""
+
+        if (
+            answer_text
+            and not self._is_invalid_llm_response(
+                answer_text
+            )
+        ):
+            return Answer(
+                text=answer_text.strip(),
+                confidence=0.8,
+                evidence=evidence,
+            )
+
+        fallback_evidence = (
+            fallback_evidence
+            if fallback_evidence is not None
+            else []
+        )
+
+        if self._is_working_on_question(
+            question.text.lower().strip()
+        ):
+            return Answer(
+                text=self._build_working_on_fallback(
+                    question,
+                    fallback_evidence,
+                ),
+                confidence=0.7,
+                evidence=evidence,
+            )
+
+        return Answer(
+            text=(
+                "I found relevant information, "
+                "but I couldn't generate a reliable "
+                "answer from it."
+            ),
+            confidence=0.0,
+            evidence=evidence,
+        )
+
     # ==========================================================
     # MAIN ANSWER
     # ==========================================================

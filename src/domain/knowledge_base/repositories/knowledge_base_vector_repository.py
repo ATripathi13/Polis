@@ -39,10 +39,11 @@ class KnowledgeBaseVectorRepository(ABC):
 
     @abstractmethod
     def search(
-        self,
+    self,
         embedding: list[float],
         *,
         limit: int = 5,
         document_id: str | None = None,
+        employee_slack_user_id: str | None = None,
     ) -> list[tuple[KnowledgeBaseChunk, float]]:
         raise NotImplementedError

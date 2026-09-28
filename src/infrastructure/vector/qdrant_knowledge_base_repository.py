@@ -135,22 +135,37 @@ class QdrantKnowledgeBaseRepository(
         *,
         limit: int = 5,
         document_id: str | None = None,
+        employee_slack_user_id: str | None = None,
     ) -> list[tuple[KnowledgeBaseChunk, float]]:
         self._validate_embedding(embedding)
 
-        query_filter = None
+        filter_conditions = []
 
         if document_id is not None:
-            query_filter = Filter(
-                must=[
-                    FieldCondition(
-                        key="document_id",
-                        match=MatchValue(
-                            value=document_id,
-                        ),
-                    )
-                ]
+            filter_conditions.append(
+                FieldCondition(
+                    key="document_id",
+                    match=MatchValue(
+                        value=document_id,
+                    ),
+                )
             )
+
+        if employee_slack_user_id is not None:
+            filter_conditions.append(
+                FieldCondition(
+                    key="metadata.employee_slack_user_id",
+                    match=MatchValue(
+                        value=employee_slack_user_id,
+                    ),
+                )
+            )
+
+        query_filter = (
+            Filter(must=filter_conditions)
+            if filter_conditions
+            else None
+        )
 
         response = self._client.query_points(
             collection_name=self.COLLECTION_NAME,

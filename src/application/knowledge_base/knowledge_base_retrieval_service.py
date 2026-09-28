@@ -30,6 +30,7 @@ class KnowledgeBaseRetrievalService:
         *,
         limit: int = 5,
         document_id: str | None = None,
+        employee_slack_user_id: str | None = None,
     ):
         """
         Convert the question into an embedding and retrieve
@@ -47,4 +48,5 @@ class KnowledgeBaseRetrievalService:
             embedding,
             limit=limit,
             document_id=document_id,
+            employee_slack_user_id=employee_slack_user_id,
         )

@@ -76,10 +76,19 @@ class SimpleCognitiveEngine(
         Routing order:
 
         1. Activity-state questions
-        2. Knowledge Base questions
-           when semantic similarity is high enough
-        3. Existing organizational reasoning
+        2. Unified organizational evidence
+           - organizational communications
+           - Knowledge Base documents
+        3. Existing organizational reasoning fallback
+
+        The final answer is generated from the combined evidence
+        so the LLM can determine which knowledge is relevant
+        instead of using hardcoded question classification.
         """
+
+        # ------------------------------------------------------
+        # ACTIVITY QUESTIONS
+        # ------------------------------------------------------
 
         if self._activity_question_service is not None:
 
@@ -92,33 +101,93 @@ class SimpleCognitiveEngine(
             if activity_answer is not None:
                 return activity_answer
 
+        # ------------------------------------------------------
+        # UNIFIED EVIDENCE
+        # ------------------------------------------------------
+
+        retrieve_evidence = getattr(
+            self._question_answering,
+            "retrieve_evidence",
+            None,
+        )
+
+        answer_from_evidence = getattr(
+            self._question_answering,
+            "answer_from_evidence",
+            None,
+        )
+
         if (
-            self._knowledge_base_retrieval_service is not None
-            and self._knowledge_base_answer_service is not None
+            callable(retrieve_evidence)
+            and callable(answer_from_evidence)
         ):
 
-            knowledge_results = (
-                self._knowledge_base_retrieval_service.retrieve(
-                    question.text,
-                    limit=5,
+            organizational_evidence = (
+                retrieve_evidence(
+                    question,
                 )
             )
 
-            if knowledge_results:
+            knowledge_base_evidence: list[str] = []
 
-                top_score = knowledge_results[0][1]
+            if (
+                self._knowledge_base_retrieval_service
+                is not None
+            ):
 
-                if top_score >= 0.70:
+                knowledge_results = (
+                    self._knowledge_base_retrieval_service.retrieve(
+                        question.text,
+                        limit=5,
+                        employee_slack_user_id=(
+                            question.target_user_id
+                        ),
+                    )
+                )
 
-                    return (
-                        self._knowledge_base_answer_service.answer(
-                            question.text,
-                            knowledge_results,
+                for chunk, _score in knowledge_results:
+
+                    content = (
+                        chunk.content.strip()
+                    )
+
+                    if not content:
+                        continue
+
+                    document_name = (
+                        chunk.metadata.get(
+                            "document_name",
+                            "Unknown",
                         )
                     )
 
-        return (
-            self._question_answering.answer(
-                question,
+                    knowledge_base_evidence.append(
+                        (
+                            f"Knowledge Base document: "
+                            f"{document_name}\n"
+                            f"{content}"
+                        )
+                    )
+
+            unified_evidence = (
+                organizational_evidence
+                + knowledge_base_evidence
             )
+
+            if unified_evidence:
+
+                return answer_from_evidence(
+                    question,
+                    unified_evidence,
+                    fallback_evidence=(
+                        organizational_evidence
+                    ),
+                )
+
+        # ------------------------------------------------------
+        # EXISTING REASONING FALLBACK
+        # ------------------------------------------------------
+
+        return self._question_answering.answer(
+            question,
         )
