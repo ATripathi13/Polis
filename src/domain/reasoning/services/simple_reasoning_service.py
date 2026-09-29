@@ -223,51 +223,6 @@ class SimpleReasoningService(
     # QUESTION CLASSIFICATION
     # ==========================================================
 
-    @staticmethod
-    def _is_working_on_question(
-        question_text: str,
-    ) -> bool:
-        """
-        Detect questions asking what a person is working on.
-        """
-
-        normalized = " ".join(
-            question_text.lower().strip().split()
-        )
-
-        patterns = (
-            "what am i working on",
-            "what am i working on today",
-            "what is working on",
-            "what is currently working on",
-            "what are you working on",
-            "what are they working on",
-            "what is he working on",
-            "what is she working on",
-            "what are they working on today",
-            "what is he working on today",
-            "what is she working on today",
-        )
-
-        if any(
-            pattern in normalized
-            for pattern in patterns
-        ):
-            return True
-
-        # Covers:
-        #
-        # What is Akshat working on today?
-        # What is Nav working on?
-        #
-        if re.search(
-            r"^what is .+ working on(?: today)?$",
-            normalized,
-        ):
-            return True
-
-        return False
-
     # ==========================================================
     # LLM RESPONSE VALIDATION
     # ==========================================================
@@ -351,121 +306,18 @@ class SimpleReasoningService(
 
         return result
 
-    def _build_working_on_fallback(
-        self,
-        question: Question,
-        evidence: list[str],
-    ) -> str:
-        """
-        Build a deterministic answer for 'working on' questions
-        when the LLM returns an unusable response.
-
-        This answer is based only on the retrieved communications.
-        """
-
-        evidence = self._deduplicate_evidence(
-            evidence
-        )
-
-        if not evidence:
-            return self._no_information_text(
-                question
-            )
-
-        person_name = (
-            question.target_user_name
-            if question.target_user_id is not None
-            else None
-        )
-
-        # ------------------------------------------------------
-        # Extract the work topic from common first-person forms.
-        # ------------------------------------------------------
-
-        topics: list[str] = []
-
-        for item in evidence:
-            text = item.strip()
-
-            patterns = (
-                r"\bi am working on\s+(.+?)(?:[.!?]|$)",
-                r"\bworking on\s+(.+?)(?:[.!?]|$)",
-                r"\bi'm working on\s+(.+?)(?:[.!?]|$)",
-                r"\bi am currently working on\s+(.+?)(?:[.!?]|$)",
-                r"\bcurrently working on\s+(.+?)(?:[.!?]|$)",
-            )
-
-            for pattern in patterns:
-                match = re.search(
-                    pattern,
-                    text,
-                    flags=re.IGNORECASE,
-                )
-
-                if match:
-                    topic = match.group(1).strip()
-
-                    if topic:
-                        topics.append(topic)
-
-                    break
-
-        topics = self._deduplicate_evidence(
-            topics
-        )
-
-        if topics:
-            topic_text = ", ".join(topics)
-
-            if person_name:
-                return (
-                    f"{person_name} is working on "
-                    f"{topic_text} today."
-                )
-
-            return (
-                f"You're working on "
-                f"{topic_text} today."
-            )
-
-        # ------------------------------------------------------
-        # If we cannot extract a clean topic, return the actual
-        # communication instead of inventing an answer.
-        # ------------------------------------------------------
-
-        if person_name:
-            return (
-                f"{person_name} said: "
-                f"\"{evidence[0]}\""
-            )
-
-        return (
-            f"You said: "
-            f"\"{evidence[0]}\""
-        )
 
     @staticmethod
     def _no_information_text(
         question: Question,
     ) -> str:
         """
-        Return a target-aware no-information response.
+        Return a generic no-information response.
         """
 
-        if question.target_user_id is not None:
-            person_name = (
-                question.target_user_name
-                or "that person"
-            )
-
-            return (
-                f"I don't have enough information to tell "
-                f"what {person_name} is working on today."
-            )
-
         return (
-            "I don't have enough information to tell "
-            "what you're working on today."
+            "POLIS does not have enough information "
+            "to answer that question."
         )
 
     def retrieve_evidence(
@@ -582,6 +434,19 @@ Instructions:
   use that identity when associating the information with them.
 - Do not invent facts.
 - Do not assume information that is not present.
+- Distinguish general responsibilities and recurring duties
+  from specific current activities.
+- Do not treat a job responsibility, profile description,
+  expected outcome, recurring duty, or generic statement such
+  as "daily tasks" as proof that the person is doing that work
+  today.
+- For time-specific questions, only state an activity as current
+  when the provided knowledge explicitly supports that activity
+  for the requested time period.
+- When the knowledge does not establish a time-specific activity,
+  answer only that POLIS does not have enough information to
+  determine it. Do not explain what the documents or knowledge
+  contain.
 - Never mention documents, provided information, evidence,
   sources, retrieval, embeddings, databases, memory,
   internal systems, or model behavior.
@@ -614,24 +479,6 @@ Instructions:
             return Answer(
                 text=answer_text.strip(),
                 confidence=0.8,
-                evidence=evidence,
-            )
-
-        fallback_evidence = (
-            fallback_evidence
-            if fallback_evidence is not None
-            else []
-        )
-
-        if self._is_working_on_question(
-            question.text.lower().strip()
-        ):
-            return Answer(
-                text=self._build_working_on_fallback(
-                    question,
-                    fallback_evidence,
-                ),
-                confidence=0.7,
                 evidence=evidence,
             )
 
@@ -728,26 +575,8 @@ Instructions:
         # ------------------------------------------------------
 
         if not evidence:
-            if (
-                "today" in question_text
-                and self._is_working_on_question(
-                    question_text
-                )
-            ):
-                return Answer(
-                    text=self._no_information_text(
-                        question
-                    ),
-                    confidence=0.0,
-                    evidence=[],
-                )
-
             return Answer(
-                text=(
-                    "Sorry, I don't know the answer to "
-                    "that question. I will keep learning "
-                    "and try to answer it in the future."
-                ),
+                text=self._no_information_text(question),
                 confidence=0.0,
                 evidence=[],
             )
@@ -828,18 +657,6 @@ Instructions:
         #
         # we do NOT send that to Slack.
         # ------------------------------------------------------
-
-        if self._is_working_on_question(
-            question_text
-        ):
-            return Answer(
-                text=self._build_working_on_fallback(
-                    question,
-                    evidence,
-                ),
-                confidence=0.7,
-                evidence=evidence,
-            )
 
         # ------------------------------------------------------
         # GENERIC FALLBACK
