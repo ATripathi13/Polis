@@ -310,7 +310,7 @@ class PostgreSQLCommunicationRepository(
                     " ".join(
                         event.content.body.lower().split()
                     ) == normalized_body
-                    for _, event in ranked_results
+                    for _, _, event in ranked_results
                 )
 
                 if already_seen:
