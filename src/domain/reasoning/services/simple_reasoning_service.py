@@ -5,7 +5,7 @@ Simple organizational reasoning service.
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from domain.reasoning.value_objects import (
@@ -367,12 +367,29 @@ class SimpleReasoningService(
         evidence: list[str] = []
 
         for communication in communications:
-            body = (
-                communication.content.body.strip()
+            body = communication.content.body.strip()
+
+            if not body:
+                continue
+
+            created_at = communication.created_at
+
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(
+                    tzinfo=timezone.utc
+                )
+
+            created_at = created_at.astimezone(
+                self.TIMEZONE
             )
 
-            if body:
-                evidence.append(body)
+            evidence.append(
+                (
+                    f"Communication time: "
+                    f"{created_at.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+                    f"Message: {body}"
+                )
+            )
 
         return self._deduplicate_evidence(
             evidence
@@ -409,6 +426,11 @@ class SimpleReasoningService(
             f"- {item}"
             for item in evidence
         )
+        current_time = datetime.now(
+            self.TIMEZONE
+        ).strftime(
+            "%Y-%m-%d %H:%M:%S %Z"
+        )
 
         prompt = f"""
 You are POLIS, an organizational intelligence assistant.
@@ -419,10 +441,14 @@ organizational knowledge provided below.
 User question:
 {question.text}
 
+Current organizational date and time:
+{current_time}
+
 Relevant organizational knowledge:
 {context}
 
 Instructions:
+- Interpret relative time expressions such as yesterday, today, tomorrow, recently, earlier, or last week using the current organizational date/time and the timestamps attached to the relevant information.
 - Answer the question directly.
 - Determine which provided information is actually relevant
   to the user's question.
