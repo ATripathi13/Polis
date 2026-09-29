@@ -536,6 +536,7 @@ class PostgreSQLCommunicationRepository(
             identifier=Identifier(
                 graph_id=UUID(record.id),
             ),
+            created_at=record.created_at,
             correlation_id=Identifier(
                 graph_id=UUID(record.correlation_id),
             ),
