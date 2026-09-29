@@ -223,7 +223,7 @@ class PostgreSQLCommunicationRepository(
 
             meaningful_words = query_words - stop_words
 
-            results = []
+            ranked_results = []
 
             for record in records:
 
@@ -285,30 +285,53 @@ class PostgreSQLCommunicationRepository(
                     ):
                         continue
 
-                if meaningful_words and all(
-                    word in searchable_text
+                if not meaningful_words:
+                    continue
+
+                matched_words = {
+                    word
                     for word in meaningful_words
-                ):
-                    normalized_body = " ".join(
-                        searchable_text.split()
-                    )
+                    if word in searchable_text
+                }
 
-                    already_seen = any(
-                        " ".join(
-                            event.content.body.lower().split()
-                        ) == normalized_body
-                        for event in results
-                    )
+                if not matched_words:
+                    continue
 
-                    if not already_seen:
-                        results.append(
-                            self._to_domain(record)
-                        )
+                match_score = (
+                    len(matched_words)
+                    / len(meaningful_words)
+                )
 
-                if len(results) >= limit:
-                    break
+                normalized_body = " ".join(
+                    searchable_text.split()
+                )
 
-            return results
+                already_seen = any(
+                    " ".join(
+                        event.content.body.lower().split()
+                    ) == normalized_body
+                    for _, event in ranked_results
+                )
+
+                if already_seen:
+                    continue
+
+                ranked_results.append(
+                    (match_score, record.created_at, self._to_domain(record))
+                )
+
+            ranked_results.sort(
+                key=lambda item: (
+                    item[0],
+                    item[1],
+                ),
+                reverse=True,
+            )
+
+            return [
+                event
+                for _, _, event in ranked_results[:limit]
+            ]
             
     @staticmethod
     def _actor_to_dict(
