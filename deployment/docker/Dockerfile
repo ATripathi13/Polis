@@ -21,6 +21,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application
 COPY src ./src
 COPY run_slack_listener.py ./
+COPY alembic.ini ./
+COPY alembic ./alembic
 
 # Make src the Python import root
 ENV PYTHONPATH=/app/src

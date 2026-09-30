@@ -7,10 +7,15 @@ from __future__ import annotations
 import logging
 import os
 import asyncio
+import re
+import threading
+import time
+from datetime import datetime, timezone
 from slack_bolt.app.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 
 from application.activity import ActivityProcessor
+from domain.reminders.services.reminder_service import ReminderService
 
 from connectors.slack.models import (
     SlackEvent,
@@ -61,12 +66,14 @@ class SlackSocketListener:
         slack_service: SlackService,
         activity_processor: ActivityProcessor,
         knowledge_base_ingestion_service: KnowledgeBaseIngestionService | None = None,
+        reminder_service: ReminderService | None = None,
     ) -> None:
         self._slack_service = slack_service
         self._activity_processor = activity_processor
         self._knowledge_base_ingestion_service = (
             knowledge_base_ingestion_service
         )
+        self._reminder_service = reminder_service
         self._identity_service = SlackIdentityService()
 
         os.environ.pop("SLACK_CLIENT_ID", None)
@@ -416,6 +423,94 @@ class SlackSocketListener:
                 return
             clean_text = text.replace(mention_token, "").strip()
 
+            # ======================================================
+            # Reminder commands.
+            #
+            # These must be handled before the normal intent router
+            # so reminder requests are not interpreted as cognitive
+            # questions.
+            # ======================================================
+
+            if self._reminder_service is not None:
+                if clean_text.lower() == "stop":
+                    stopped_count = (
+                        self._reminder_service.stop_for_target(
+                            user_id,
+                        )
+                    )
+
+                    self._responder.reply(
+                        channel=channel_id,
+                        thread_ts=thread_ts or ts,
+                        text=(
+                            f"Stopped {stopped_count} active reminder"
+                            f"{'' if stopped_count == 1 else 's'}."
+                        ),
+                    )
+                    return
+
+                reminder_match = re.match(
+                    r"^remind\s+(.+?)\s+to\s+(.+)$",
+                    clean_text,
+                    re.IGNORECASE,
+                )
+
+                if reminder_match:
+                    target_text = reminder_match.group(1).strip()
+                    task = reminder_match.group(2).strip()
+
+                    target_user_id = None
+
+                    mention_match = re.fullmatch(
+                        r"<@([A-Z0-9]+)>",
+                        target_text,
+                    )
+
+                    if mention_match:
+                        target_user_id = mention_match.group(1)
+                    else:
+                        target_user_id = (
+                            self._identity_service.resolve_user(
+                                target_text,
+                            )
+                        )
+
+                    if not target_user_id:
+                        self._responder.reply(
+                            channel=channel_id,
+                            thread_ts=thread_ts or ts,
+                            text=(
+                                f"I couldn't uniquely resolve "
+                                f"`{target_text}` to a Slack user."
+                            ),
+                        )
+                        return
+
+                    settings = get_settings()
+
+                    self._reminder_service.create(
+                        target_user_id=target_user_id,
+                        creator_user_id=user_id,
+                        task=task,
+                        channel_id=channel_id,
+                        source_message_ts=ts,
+                        source_thread_ts=thread_ts,
+                        timezone_name=settings.reminder_timezone,
+                        time_1=settings.reminder_time_1,
+                        time_2=settings.reminder_time_2,
+                    )
+
+                    self._responder.reply(
+                        channel=channel_id,
+                        thread_ts=thread_ts or ts,
+                        text=(
+                            "Reminder created. "
+                            f"I'll remind <@{target_user_id}> twice daily "
+                            f"about: {task}"
+                        ),
+                    )
+                    return
+
             activity_message = ActivitySlackMessage(
                 user=activity_message.user,
                 channel=activity_message.channel,
@@ -449,11 +544,74 @@ class SlackSocketListener:
 
             return
 
+    def _run_reminder_worker(self) -> None:
+        while True:
+            try:
+                if self._reminder_service is not None:
+                    due_reminders = self._reminder_service.find_due()
+
+                    for reminder in due_reminders:
+                        try:
+                            dm_channel = self._slack_client.open_dm(
+                                reminder.target_user_id,
+                            )
+
+                            self._slack_client.post_message(
+                                channel=dm_channel,
+                                text=f"Reminder: {reminder.task}",
+                            )
+
+                            sent_at = datetime.now(timezone.utc)
+                            settings = get_settings()
+
+                            next_reminder_at = (
+                                ReminderService.next_reminder_time(
+                                    now=sent_at,
+                                    timezone_name=settings.reminder_timezone,
+                                    time_1=settings.reminder_time_1,
+                                    time_2=settings.reminder_time_2,
+                                )
+                            )
+
+                            self._reminder_service.mark_sent(
+                                reminder,
+                                last_sent_at=sent_at,
+                                next_reminder_at=next_reminder_at,
+                            )
+
+                            logger.info(
+                                "Reminder delivered",
+                                extra={
+                                    "reminder_id": str(reminder.graph_id),
+                                    "target_user_id": reminder.target_user_id,
+                                },
+                            )
+
+                        except Exception:
+                            logger.exception(
+                                "Failed to deliver reminder %s",
+                                reminder.graph_id,
+                            )
+
+            except Exception:
+                logger.exception(
+                    "Reminder worker iteration failed",
+                )
+
+            time.sleep(30)
+
     async def start(self) -> None:
         """Start Slack Socket Mode."""
         logger.info(
             "Starting Slack Socket Mode listener",
         )
+
+        reminder_worker = threading.Thread(
+            target=self._run_reminder_worker,
+            name="polis-reminder-worker",
+            daemon=True,
+        )
+        reminder_worker.start()
 
         await self._handler.start_async()
 
