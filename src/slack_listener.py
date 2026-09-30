@@ -28,7 +28,7 @@ from engines.communication.handlers import (
 from engines.communication.domain.events import (
     CommunicationCreatedEvent,
 )
-
+from engines.slack.services.slack_client import SlackClient
 
 def create_listener():
 
@@ -61,9 +61,12 @@ def create_listener():
         communication_service=communication_service,
         cognitive_engine=cognitive_engine,
     )
+    slack_client = SlackClient()
 
     return SlackSocketMode(
         slack_service,
+        reminder_service=application.reminder_service,
+        slack_client=slack_client,
     )
 
 

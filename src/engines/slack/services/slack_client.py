@@ -12,10 +12,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 class SlackClient:
     """
     Simple client for the Slack Web API.
     """
+
     def __init__(self) -> None:
 
         self._token = os.environ["SLACK_BOT_TOKEN"]
@@ -23,6 +25,7 @@ class SlackClient:
         self._url = (
             "https://slack.com/api/chat.postMessage"
         )
+
     def post_message(
         self,
         channel: str,
@@ -36,10 +39,10 @@ class SlackClient:
             "channel": channel,
             "text": text,
         }
-        if thread_ts:
 
+        if thread_ts:
             payload["thread_ts"] = thread_ts
-        
+
         headers = {
             "Authorization": (
                 f"Bearer {self._token}"
@@ -53,20 +56,70 @@ class SlackClient:
             headers=headers,
             timeout=10,
         )
+
         print("=" * 80)
         print("SLACK API RESPONSE")
         print(response.status_code)
         print(response.json())
         print("=" * 80)
-        data = response.json()
-        if not data.get("ok"):
 
+        data = response.json()
+
+        if not data.get("ok"):
             raise RuntimeError(
                 data.get(
                     "error",
                     "Unknown Slack error",
                 )
             )
+
+    def open_dm(
+        self,
+        user_id: str,
+    ) -> str:
+        """
+        Open or retrieve a direct-message conversation
+        with a Slack user.
+        """
+        headers = {
+            "Authorization": (
+                f"Bearer {self._token}"
+            ),
+            "Content-Type": "application/json",
+        }
+
+        response = requests.post(
+            "https://slack.com/api/conversations.open",
+            json={
+                "users": user_id,
+            },
+            headers=headers,
+            timeout=10,
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        if not data.get("ok"):
+            raise RuntimeError(
+                data.get(
+                    "error",
+                    "Failed to open Slack DM.",
+                )
+            )
+
+        channel = data.get("channel", {})
+
+        channel_id = channel.get("id")
+
+        if not channel_id:
+            raise RuntimeError(
+                "Slack did not return a DM channel ID."
+            )
+
+        return channel_id
+
     def get_file_info(
         self,
         file_id: str,
@@ -102,6 +155,7 @@ class SlackClient:
             )
 
         return data["file"]
+
     def download_file(
         self,
         file_url: str,

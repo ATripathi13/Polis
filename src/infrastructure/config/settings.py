@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -110,9 +109,27 @@ class Settings(BaseSettings):
         alias="MICROSOFT_GRAPH_CLIENT_SECRET"
     )
 
-    teams_webhook_url: str = Field(
-        alias="TEAMS_WEBHOOK_URL"
+    teams_webhook_url: str = Field(alias="TEAMS_WEBHOOK_URL")
+
+    # ==========================================================
+    # Reminders
+    # ==========================================================
+
+    reminder_timezone: str = Field(
+        default="Asia/Kolkata",
+        alias="REMINDER_TIMEZONE",
     )
+
+    reminder_time_1: str = Field(
+        default="11:00",
+        alias="REMINDER_TIME_1",
+    )
+
+    reminder_time_2: str = Field(
+        default="21:00",
+        alias="REMINDER_TIME_2",
+    )
+
     # ==========================================================
     # LLM / OpenRouter
     # ==========================================================
@@ -128,16 +145,16 @@ class Settings(BaseSettings):
         default="https://openrouter.ai/api/v1",
         alias="OPENROUTER_BASE_URL",
     )
+
     knowledge_base_embedding_model: str = Field(
         default="openai/text-embedding-3-small",
         alias="KNOWLEDGE_BASE_EMBEDDING_MODEL",
     )
 
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
 
-
     settings = Settings()
-
 
     return settings

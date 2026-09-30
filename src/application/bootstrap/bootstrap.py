@@ -64,6 +64,10 @@ from application.meetings import (
     MeetingTranscriptService,
 )
 
+from domain.reminders.services import (
+    ReminderService,
+)
+
 from infrastructure.meetings.microsoft_teams_subscription_provider import (
     MicrosoftTeamsSubscriptionProvider,
 )
@@ -77,6 +81,7 @@ from infrastructure.config.settings import get_settings
 from infrastructure.database import (
     PostgreSQLMeetingTranscriptRepository,
     PostgreSQLTeamsSubscriptionRepository,
+    PostgreSQLReminderRepository,
 )
 
 from domain.observation import (
@@ -145,6 +150,7 @@ def bootstrap(
     teams_subscription_repository = (
         PostgreSQLTeamsSubscriptionRepository()
     )
+    reminder_repository = PostgreSQLReminderRepository()
 
     microsoft_graph_token_provider = (
         MicrosoftGraphTokenProvider()
@@ -166,6 +172,9 @@ def bootstrap(
         repository=teams_subscription_repository,
         provider=microsoft_teams_subscription_provider,
         notification_url=settings.teams_webhook_url,
+    )
+    reminder_service = ReminderService(
+        repository=reminder_repository,
     )
     meeting_transcript_service = MeetingTranscriptService(
         repository=meeting_transcript_repository,
@@ -316,5 +325,7 @@ def bootstrap(
         meeting_transcript_provider=microsoft_teams_transcript_provider,
         teams_subscription_repository=teams_subscription_repository,
         teams_subscription_service=teams_subscription_service,
+        reminder_repository=reminder_repository,
+        reminder_service=reminder_service,
         knowledge_base_ingestion_service=knowledge_base_ingestion,
     )

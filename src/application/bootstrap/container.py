@@ -33,9 +33,18 @@ from domain.meetings import (
     TeamsSubscriptionRepository,
 )
 
+from domain.reminders import (
+    ReminderRepository,
+)
+
+from domain.reminders.services import (
+    ReminderService,
+)
+
 from application.knowledge_base import (
     KnowledgeBaseIngestionService,
 )
+
 
 @dataclass(slots=True)
 class ApplicationContainer:
@@ -61,3 +70,7 @@ class ApplicationContainer:
     teams_subscription_repository: TeamsSubscriptionRepository
 
     teams_subscription_service: TeamsSubscriptionService
+
+    reminder_repository: ReminderRepository
+
+    reminder_service: ReminderService

@@ -19,6 +19,11 @@ from .meeting_transcript_repository import (
 from .teams_subscription_repository import (
     PostgreSQLTeamsSubscriptionRepository,
 )
+
+from .reminder_repository import (
+    PostgreSQLReminderRepository,
+)
+
 from .knowledge_base_repository import (
     PostgreSQLKnowledgeBaseChunkRepository,
     PostgreSQLKnowledgeBaseDocumentRepository,
@@ -32,6 +37,7 @@ __all__ = [
     "PostgreSQLActivityRepository",
     "PostgreSQLMeetingTranscriptRepository",
     "PostgreSQLTeamsSubscriptionRepository",
+    "PostgreSQLReminderRepository",
     "PostgreSQLKnowledgeBaseDocumentRepository",
     "PostgreSQLKnowledgeBaseChunkRepository",
 ]

@@ -465,3 +465,68 @@ class ConversationMemoryModel(Base):
         DateTime(timezone=True),
         nullable=False,
     )
+class ReminderModel(Base):
+    __tablename__ = "reminders"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+
+    target_user_id: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        index=True,
+    )
+
+    creator_user_id: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        index=True,
+    )
+
+    task: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+
+    channel_id: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
+    source_message_ts: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
+    source_thread_ts: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    active: Mapped[bool] = mapped_column(
+        nullable=False,
+        index=True,
+    )
+
+    next_reminder_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        index=True,
+    )
+
+    last_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
