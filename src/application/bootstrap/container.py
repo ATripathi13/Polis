@@ -1,4 +1,4 @@
-"""
+﻿"""
 Application container.
 """
 
@@ -26,6 +26,7 @@ from domain.knowledge import (
 from application.meetings import (
     MeetingTranscriptService,
     MeetingTranscriptProvider,
+    MeetingRecordingProvider,
     TeamsSubscriptionService,
 )
 
@@ -67,6 +68,8 @@ class ApplicationContainer:
 
     meeting_transcript_provider: MeetingTranscriptProvider
 
+    meeting_recording_provider: MeetingRecordingProvider
+
     teams_subscription_repository: TeamsSubscriptionRepository
 
     teams_subscription_service: TeamsSubscriptionService
@@ -76,3 +79,4 @@ class ApplicationContainer:
     reminder_repository: ReminderRepository
 
     reminder_service: ReminderService
+

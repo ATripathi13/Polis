@@ -1,4 +1,4 @@
-"""
+﻿"""
 Application bootstrap.
 """
 
@@ -113,6 +113,10 @@ from infrastructure.meetings.microsoft_graph_token_provider import (
 from infrastructure.meetings.microsoft_teams_transcript_provider import (
     MicrosoftTeamsTranscriptProvider,
 )
+
+from infrastructure.meetings.microsoft_teams_recording_provider import (
+    MicrosoftTeamsRecordingProvider,
+)
 from infrastructure.llm import (
     OpenRouterClient,
     LocalEmbeddingClient,
@@ -158,6 +162,12 @@ def bootstrap(
 
     microsoft_teams_transcript_provider = (
         MicrosoftTeamsTranscriptProvider(
+            microsoft_graph_token_provider,
+        )
+    )
+
+    microsoft_teams_recording_provider = (
+        MicrosoftTeamsRecordingProvider(
             microsoft_graph_token_provider,
         )
     )
@@ -329,6 +339,7 @@ def bootstrap(
         activity_question_service=activity_question_service,
         meeting_transcript_service=meeting_transcript_service,
         meeting_transcript_provider=microsoft_teams_transcript_provider,
+        meeting_recording_provider=microsoft_teams_recording_provider,
         teams_subscription_repository=teams_subscription_repository,
         teams_subscription_service=teams_subscription_service,
         teams_recording_subscription_service=(
@@ -338,3 +349,6 @@ def bootstrap(
         reminder_service=reminder_service,
         knowledge_base_ingestion_service=knowledge_base_ingestion,
     )
+
+
+

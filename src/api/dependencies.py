@@ -1,4 +1,4 @@
-"""
+﻿"""
 Dependency providers.
 """
 
@@ -191,6 +191,13 @@ def get_meeting_transcript_service():
     return _application.meeting_transcript_service
 
     
+def get_meeting_recording_provider():
+    """
+    Return the shared meeting recording provider.
+    """
+
+    return _application.meeting_recording_provider
+
 def get_meeting_transcript_provider():
     """
     Return the shared meeting transcript provider.
@@ -223,3 +230,4 @@ def get_conversation_repository() -> PostgreSQLConversationRepository:
     """
 
     return _conversation_repository
+
