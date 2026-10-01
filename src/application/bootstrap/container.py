@@ -71,6 +71,8 @@ class ApplicationContainer:
 
     teams_subscription_service: TeamsSubscriptionService
 
+    teams_recording_subscription_service: TeamsSubscriptionService
+
     reminder_repository: ReminderRepository
 
     reminder_service: ReminderService

@@ -22,7 +22,10 @@ class TeamsSubscriptionRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def find_active(self) -> TeamsSubscription | None:
+    def find_active(
+        self,
+        resource: str,
+    ) -> TeamsSubscription | None:
         raise NotImplementedError
 
     @abstractmethod

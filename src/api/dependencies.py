@@ -205,6 +205,11 @@ def get_teams_subscription_service():
 
     return _application.teams_subscription_service
 
+def get_teams_recording_subscription_service():
+    """
+    Return the shared Teams recording subscription service.
+    """
+    return _application.teams_recording_subscription_service
 
 def get_teams_service() -> TeamsService:
     """

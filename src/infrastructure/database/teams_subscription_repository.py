@@ -65,7 +65,10 @@ class PostgreSQLTeamsSubscriptionRepository(
 
             session.commit()
 
-    def find_active(self) -> TeamsSubscription | None:
+    def find_active(
+        self,
+        resource: str,
+    ) -> TeamsSubscription | None:
 
         now = datetime.now(timezone.utc)
 
@@ -74,7 +77,8 @@ class PostgreSQLTeamsSubscriptionRepository(
             record = (
                 session.query(TeamsSubscriptionModel)
                 .filter(
-                    TeamsSubscriptionModel.expiration_datetime > now
+                    TeamsSubscriptionModel.expiration_datetime > now,
+                    TeamsSubscriptionModel.resource == resource,
                 )
                 .order_by(
                     TeamsSubscriptionModel.expiration_datetime.desc()

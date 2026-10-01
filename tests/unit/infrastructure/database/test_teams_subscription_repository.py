@@ -22,7 +22,9 @@ def test_teams_subscription_repository_save_and_find_active():
 
     repository.save(subscription)
 
-    found = repository.find_active()
+    found = repository.find_active(
+        "/communications/onlineMeetings/getAllTranscripts"
+    )
 
     assert found is not None
     assert found.subscription_id == "polis-test-subscription"
@@ -34,4 +36,6 @@ def test_teams_subscription_repository_save_and_find_active():
 
     repository.delete("polis-test-subscription")
 
-    assert repository.find_active() is None
+    assert repository.find_active(
+        "/communications/onlineMeetings/getAllTranscripts"
+    ) is None

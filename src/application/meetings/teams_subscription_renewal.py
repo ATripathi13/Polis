@@ -18,9 +18,13 @@ class TeamsSubscriptionRenewal:
     """
 
     CHECK_INTERVAL_SECONDS = 5 * 60
-
-    def __init__(self, service: TeamsSubscriptionService) -> None:
-        self._service = service
+    def __init__(
+        self,
+        transcript_service: TeamsSubscriptionService,
+        recording_service: TeamsSubscriptionService,
+    ) -> None:
+        self._transcript_service = transcript_service
+        self._recording_service = recording_service
         self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
@@ -58,14 +62,28 @@ class TeamsSubscriptionRenewal:
                     "Checking Teams transcript subscription"
                 )
 
-                subscription = await asyncio.to_thread(
-                    self._service.ensure_subscription
+                transcript_subscription = await asyncio.to_thread(
+                    self._transcript_service.ensure_subscription
                 )
 
                 logger.warning(
                     "Teams transcript subscription check complete: "
                     "expires=%s",
-                    subscription.expiration_datetime,
+                    transcript_subscription.expiration_datetime,
+                )
+
+                logger.warning(
+                    "Checking Teams recording subscription"
+                )
+
+                recording_subscription = await asyncio.to_thread(
+                    self._recording_service.ensure_subscription
+                )
+
+                logger.warning(
+                    "Teams recording subscription check complete: "
+                    "expires=%s",
+                    recording_subscription.expiration_datetime,
                 )
 
             except asyncio.CancelledError:

@@ -13,7 +13,14 @@ class TeamsSubscriptionService:
     """
 
     CLIENT_STATE = "polis-teams-transcript"
-    RESOURCE = "communications/onlineMeetings/getAllTranscripts"
+    TRANSCRIPT_RESOURCE = (
+        "communications/onlineMeetings/getAllTranscripts"
+    )
+
+    RECORDING_RESOURCE = (
+        "communications/onlineMeetings/getAllRecordings"
+    )
+
     RENEWAL_THRESHOLD_MINUTES = 15
 
     def __init__(
@@ -22,12 +29,14 @@ class TeamsSubscriptionService:
         provider,
         *,
         notification_url: str,
+        resource: str = TRANSCRIPT_RESOURCE,
         subscription_lifetime_hours: int = 1,
         now_provider=None,
     ) -> None:
         self.repository = repository
         self.provider = provider
         self.notification_url = notification_url
+        self.resource = resource
         self.subscription_lifetime_hours = (
             subscription_lifetime_hours
         )
@@ -36,7 +45,7 @@ class TeamsSubscriptionService:
         )
 
     def ensure_subscription(self) -> TeamsSubscription:
-        existing = self.repository.find_active()
+        existing = self.repository.find_active(self.resource)
 
         now = self._now_provider()
 
@@ -93,7 +102,7 @@ class TeamsSubscriptionService:
         )
 
         data = self.provider.create_subscription(
-            resource=self.RESOURCE,
+            resource=self.resource,
             notification_url=self.notification_url,
             expiration_datetime=expiration_datetime,
             client_state=self.CLIENT_STATE,

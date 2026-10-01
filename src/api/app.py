@@ -2,7 +2,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from api.dependencies import get_teams_subscription_service
+from api.dependencies import (
+    get_teams_recording_subscription_service,
+    get_teams_subscription_service,
+)
 from api.router import api_router
 from application.meetings.teams_subscription_renewal import (
     TeamsSubscriptionRenewal,
@@ -10,7 +13,8 @@ from application.meetings.teams_subscription_renewal import (
 
 
 teams_subscription_renewal = TeamsSubscriptionRenewal(
-    get_teams_subscription_service()
+    transcript_service=get_teams_subscription_service(),
+    recording_service=get_teams_recording_subscription_service(),
 )
 
 

@@ -167,12 +167,18 @@ def bootstrap(
             microsoft_graph_token_provider,
         )
     )
-
     teams_subscription_service = TeamsSubscriptionService(
         repository=teams_subscription_repository,
         provider=microsoft_teams_subscription_provider,
         notification_url=settings.teams_webhook_url,
     )
+    teams_recording_subscription_service = TeamsSubscriptionService(
+        repository=teams_subscription_repository,
+        provider=microsoft_teams_subscription_provider,
+        notification_url=settings.teams_webhook_url,
+        resource=TeamsSubscriptionService.RECORDING_RESOURCE,
+    )
+
     reminder_service = ReminderService(
         repository=reminder_repository,
     )
@@ -325,6 +331,9 @@ def bootstrap(
         meeting_transcript_provider=microsoft_teams_transcript_provider,
         teams_subscription_repository=teams_subscription_repository,
         teams_subscription_service=teams_subscription_service,
+        teams_recording_subscription_service=(
+            teams_recording_subscription_service
+        ),
         reminder_repository=reminder_repository,
         reminder_service=reminder_service,
         knowledge_base_ingestion_service=knowledge_base_ingestion,
