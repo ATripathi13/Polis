@@ -4,6 +4,8 @@ Microsoft Teams Application Service.
 
 from __future__ import annotations
 
+import logging
+
 from application.cognitive import CognitiveEngine
 
 from connectors.microsoft_teams.models import (
@@ -29,6 +31,7 @@ from engines.communication.application.services import (
 from engines.communication.domain.aggregates import (
     CommunicationEvent,
 )
+logger = logging.getLogger(__name__)
 
 
 class TeamsService:
@@ -81,9 +84,16 @@ class TeamsService:
                 command,
             )
 
-            self._cognitive_engine.learn(
-                saved,
-            )
+            try:
+                self._cognitive_engine.learn(
+                    saved,
+                )
+            except Exception:
+                logger.exception(
+                    "Teams cognitive processing failed for "
+                    "transcript segment %s",
+                    communication.source_event_id,
+                )
 
             saved_events.append(saved)
 
