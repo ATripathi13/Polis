@@ -1,9 +1,13 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
+
+from application.knowledge_base.knowledge_base_metadata_policy import (
+    KnowledgeBaseMetadataPolicy,
+)
 
 from domain.knowledge_base import (
     KnowledgeBaseChunk,
@@ -94,8 +98,10 @@ class KnowledgeBaseIngestionService:
             )
         )
 
-        requested_metadata = dict(
-            metadata or {}
+        requested_metadata = (
+            dict(metadata)
+            if metadata is not None
+            else KnowledgeBaseMetadataPolicy.classify(name or path.name)
         )
 
         if existing is not None:

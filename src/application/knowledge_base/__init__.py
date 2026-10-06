@@ -1,3 +1,6 @@
+﻿from .knowledge_base_metadata_policy import (
+    KnowledgeBaseMetadataPolicy,
+)
 from .knowledge_base_ingestion_service import (
     KnowledgeBaseIngestionService,
 )
@@ -17,4 +20,5 @@ __all__ = [
     "KnowledgeBaseAnswerService",
     "KnowledgeBaseFolderIngestionResult",
     "KnowledgeBaseFolderIngestionService",
+    "KnowledgeBaseMetadataPolicy",
 ]
