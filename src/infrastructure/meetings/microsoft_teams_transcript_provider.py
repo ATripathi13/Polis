@@ -96,7 +96,7 @@ class MicrosoftTeamsTranscriptProvider(MeetingTranscriptProvider):
 
         content_response.raise_for_status()
 
-        transcript_text = content_response.text.strip()
+        transcript_text = content_response.content.decode("utf-8").strip()
 
         if not transcript_text:
             return None

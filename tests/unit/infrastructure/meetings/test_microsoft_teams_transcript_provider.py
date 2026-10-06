@@ -110,3 +110,45 @@ def test_get_transcript_returns_none_for_missing_meeting():
         result = provider.get_transcript("meeting-003")
 
     assert result is None
+
+
+def test_get_transcript_decodes_utf8_transcript_content():
+    metadata_response = Mock()
+    metadata_response.status_code = 200
+    metadata_response.json.return_value = {
+        "value": [
+            {
+                "id": "transcript-hindi",
+                "createdDateTime": "2026-09-10T10:00:00Z",
+            }
+        ]
+    }
+
+    content_response = Mock()
+    content_response.status_code = 200
+    content_response.content = (
+        "WEBVTT\n\n"
+        "00:00:01.000 --> 00:00:04.000\n"
+        "<v Akshat>कुछ नहीं करो काम।"
+    ).encode("utf-8")
+
+    access_token_provider = Mock(
+        return_value="test-access-token"
+    )
+
+    provider = MicrosoftTeamsTranscriptProvider(
+        access_token_provider
+    )
+
+    with patch(
+        "infrastructure.meetings.microsoft_teams_transcript_provider.requests.get",
+        side_effect=[
+            metadata_response,
+            content_response,
+        ],
+    ):
+
+        result = provider.get_transcript("meeting-hindi")
+
+    assert result is not None
+    assert "कुछ नहीं करो काम।" in result.transcript
