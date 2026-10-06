@@ -371,7 +371,7 @@ class SlackSocketListener:
                                 ).lower()
                             )
 
-                            document_metadata = {}
+                            document_metadata = None
 
                             if is_employee_profile:
                                 document_metadata = {
