@@ -1,7 +1,7 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from botocore.exceptions import ClientError
 import boto3
+from botocore.exceptions import ClientError
 
 from domain.knowledge_base import (
     KnowledgeBaseObjectStorage,
@@ -21,7 +21,6 @@ class MinIOKnowledgeBaseStorage(
         settings = get_settings()
 
         self._bucket = settings.minio_bucket
-
         self._client = boto3.client(
             "s3",
             endpoint_url=settings.minio_endpoint,
@@ -29,14 +28,17 @@ class MinIOKnowledgeBaseStorage(
             aws_secret_access_key=settings.minio_secret_key,
             region_name="us-east-1",
         )
-
-        self._ensure_bucket()
+        self._bucket_initialized = False
 
     def _ensure_bucket(self) -> None:
+        if self._bucket_initialized:
+            return
+
         try:
             self._client.head_bucket(
                 Bucket=self._bucket,
             )
+            self._bucket_initialized = True
             return
         except ClientError as exc:
             error_code = str(
@@ -59,6 +61,7 @@ class MinIOKnowledgeBaseStorage(
         self._client.create_bucket(
             Bucket=self._bucket,
         )
+        self._bucket_initialized = True
 
     def put(
         self,
@@ -67,6 +70,8 @@ class MinIOKnowledgeBaseStorage(
         *,
         content_type: str,
     ) -> None:
+        self._ensure_bucket()
+
         if not object_key.strip():
             raise ValueError(
                 "object_key cannot be empty."
@@ -88,6 +93,8 @@ class MinIOKnowledgeBaseStorage(
         self,
         object_key: str,
     ) -> bytes:
+        self._ensure_bucket()
+
         response = self._client.get_object(
             Bucket=self._bucket,
             Key=object_key,
@@ -99,6 +106,8 @@ class MinIOKnowledgeBaseStorage(
         self,
         object_key: str,
     ) -> None:
+        self._ensure_bucket()
+
         self._client.delete_object(
             Bucket=self._bucket,
             Key=object_key,
@@ -108,6 +117,8 @@ class MinIOKnowledgeBaseStorage(
         self,
         object_key: str,
     ) -> bool:
+        self._ensure_bucket()
+
         try:
             self._client.head_object(
                 Bucket=self._bucket,

@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+﻿from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
 from application.meetings.teams_subscription_service import (
@@ -11,34 +11,22 @@ def test_existing_active_subscription_is_reused():
     repository = Mock()
     provider = Mock()
 
+    now = datetime(
+        2026,
+        10,
+        7,
+        12,
+        0,
+        tzinfo=timezone.utc,
+    )
+
     existing = TeamsSubscription.create(
         subscription_id="existing-subscription",
         resource="communications/onlineMeetings/getAllTranscripts",
-        expiration_datetime=datetime(
-            2026,
-            10,
-            2,
-            18,
-            0,
-            tzinfo=timezone.utc,
-        ),
+        expiration_datetime=now + timedelta(hours=1),
         client_state="polis-teams-transcript",
-        created_at=datetime(
-            2026,
-            10,
-            2,
-            17,
-            0,
-            tzinfo=timezone.utc,
-        ),
-        updated_at=datetime(
-            2026,
-            10,
-            2,
-            17,
-            0,
-            tzinfo=timezone.utc,
-        ),
+        created_at=now - timedelta(hours=1),
+        updated_at=now - timedelta(hours=1),
     )
 
     repository.find_active.return_value = existing
@@ -47,6 +35,7 @@ def test_existing_active_subscription_is_reused():
         repository=repository,
         provider=provider,
         notification_url="https://example.com/teams/webhook",
+        now_provider=lambda: now,
     )
 
     result = service.ensure_subscription()

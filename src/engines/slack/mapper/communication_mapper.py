@@ -1,4 +1,4 @@
-"""
+﻿"""
 Maps Slack messages into CommunicationEvents.
 """
 
@@ -27,6 +27,7 @@ from engines.slack.dto import (
     SlackMessage,
 )
 
+
 class CommunicationMapper:
     """
     Converts Slack DTOs into
@@ -34,13 +35,14 @@ class CommunicationMapper:
     """
 
     def to_communication(
-    self,
-    message: SlackMessage,
+        self,
+        message: SlackMessage,
     ) -> CommunicationEvent:
         """
         Convert a Slack message into
         a CommunicationEvent.
         """
+
         actor = Actor(
             identity=CommunicationIdentity(
                 internal_id=message.user,
@@ -50,6 +52,7 @@ class CommunicationMapper:
             ),
             display_name=message.user,
         )
+
         channel = Channel(
             identity=CommunicationIdentity(
                 internal_id=message.channel,
@@ -60,11 +63,16 @@ class CommunicationMapper:
             name=message.channel,
             channel_type="slack",
         )
+
         content = Content(
             body=message.text,
         )
+
         return CommunicationEvent.create(
-            correlation_id=Identifier(),
+            correlation_id=Identifier(
+                business_id=message.thread_ts
+                or message.event_ts,
+            ),
             source=EventSource.SLACK,
             source_event_id=message.event_ts,
             actor=actor,

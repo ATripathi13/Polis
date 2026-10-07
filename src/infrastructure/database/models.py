@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 
@@ -38,6 +38,7 @@ class KnowledgeRecordModel(Base):
         Float,
         nullable=False,
     )
+
 
     source: Mapped[str] = mapped_column(
         String(100),
@@ -372,6 +373,12 @@ class CommunicationEventModel(Base):
         String(36),
         nullable=False,
         index=True,
+    )
+
+    correlation_business_id: Mapped[str] = mapped_column(
+        String(1000),
+        nullable=False,
+        default="",
     )
 
     source: Mapped[str] = mapped_column(

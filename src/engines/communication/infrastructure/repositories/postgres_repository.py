@@ -1,4 +1,4 @@
-"""
+﻿"""
 PostgreSQL repository for communication events.
 """
 
@@ -61,6 +61,15 @@ class PostgreSQLCommunicationRepository(
             )
 
             if existing is not None:
+                if (
+                    not existing.correlation_business_id
+                    and event.correlation_id.business_id
+                ):
+                    existing.correlation_business_id = (
+                        event.correlation_id.business_id
+                    )
+                    session.commit()
+
                 return self._to_domain(existing)
 
             record = CommunicationEventModel(
@@ -68,6 +77,7 @@ class PostgreSQLCommunicationRepository(
                 correlation_id=str(
                     event.correlation_id.graph_id
                 ),
+                correlation_business_id=event.correlation_id.business_id,
                 source=event.source.value,
                 source_event_id=event.source_event_id,
                 actor=self._actor_to_dict(event.actor),
@@ -539,6 +549,7 @@ class PostgreSQLCommunicationRepository(
             created_at=record.created_at,
             correlation_id=Identifier(
                 graph_id=UUID(record.correlation_id),
+                business_id=record.correlation_business_id,
             ),
             source=EventSource(record.source),
             source_event_id=record.source_event_id,

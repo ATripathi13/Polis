@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -35,10 +35,12 @@ class QdrantKnowledgeBaseRepository(
             url=settings.qdrant_url,
             api_key=settings.qdrant_api_key,
         )
-
-        self._ensure_collection()
+        self._collection_initialized = False
 
     def _ensure_collection(self) -> None:
+        if self._collection_initialized:
+            return
+
         collections = self._client.get_collections()
 
         exists = any(
@@ -46,22 +48,23 @@ class QdrantKnowledgeBaseRepository(
             for collection in collections.collections
         )
 
-        if exists:
-            return
+        if not exists:
+            self._client.create_collection(
+                collection_name=self.COLLECTION_NAME,
+                vectors_config=VectorParams(
+                    size=self.VECTOR_SIZE,
+                    distance=Distance.COSINE,
+                ),
+            )
 
-        self._client.create_collection(
-            collection_name=self.COLLECTION_NAME,
-            vectors_config=VectorParams(
-                size=self.VECTOR_SIZE,
-                distance=Distance.COSINE,
-            ),
-        )
+        self._collection_initialized = True
 
     def upsert(
         self,
         chunk: KnowledgeBaseChunk,
         embedding: list[float],
     ) -> None:
+        self._ensure_collection()
         self._validate_embedding(embedding)
 
         self._client.upsert(
@@ -80,6 +83,8 @@ class QdrantKnowledgeBaseRepository(
         chunks: list[KnowledgeBaseChunk],
         embeddings: list[list[float]],
     ) -> None:
+        self._ensure_collection()
+
         if len(chunks) != len(embeddings):
             raise ValueError(
                 "chunks and embeddings must have the same length."
@@ -114,6 +119,8 @@ class QdrantKnowledgeBaseRepository(
         self,
         document_id: str,
     ) -> None:
+        self._ensure_collection()
+
         self._client.delete(
             collection_name=self.COLLECTION_NAME,
             points_selector=Filter(
@@ -137,6 +144,7 @@ class QdrantKnowledgeBaseRepository(
         document_id: str | None = None,
         employee_slack_user_id: str | None = None,
     ) -> list[tuple[KnowledgeBaseChunk, float]]:
+        self._ensure_collection()
         self._validate_embedding(embedding)
 
         filter_conditions = []
