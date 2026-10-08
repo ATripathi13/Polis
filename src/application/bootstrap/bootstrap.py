@@ -1,4 +1,4 @@
-﻿"""
+"""
 Application bootstrap.
 """
 
@@ -7,6 +7,9 @@ from __future__ import annotations
 
 from infrastructure.llm.knowledge_understanding import (
     LLMKnowledgeUnderstanding,
+)
+from infrastructure.llm.operational_understanding import (
+    LLMOperationalUnderstanding,
 )
 from infrastructure.vector import (
     QdrantKnowledgeBaseRepository,
@@ -35,6 +38,9 @@ from application.pipeline.pipeline import (
 from application.services.knowledge_acceptance_service import (
     KnowledgeAcceptanceService,
 )
+from application.operations import (
+    OperationalItemService,
+)
 
 from domain.knowledge import (
     KnowledgeDiscoveryRule,
@@ -54,6 +60,7 @@ from application.activity import (
 from infrastructure.database import (
     PostgreSQLKnowledgeRepository,
     PostgreSQLActivityRepository,
+    PostgreSQLOperationalItemRepository,
 )
 
 from engines.communication.infrastructure.repositories import (
@@ -86,12 +93,14 @@ from infrastructure.database import (
 
 from domain.observation import (
     KnowledgeObservationRule,
+    OperationalObservationRule,
     ObservationRuleRegistry,
     RuleBasedObservationExtractor,
 )
 
 from domain.organization import (
     KnowledgeOrganizationRule,
+    OperationalOrganizationRule,
     OrganizationEventRuleRegistry,
     RuleBasedOrganizationEventBuilder,
 )
@@ -155,6 +164,10 @@ def bootstrap(
         PostgreSQLTeamsSubscriptionRepository()
     )
     reminder_repository = PostgreSQLReminderRepository()
+    operational_item_repository = PostgreSQLOperationalItemRepository()
+    operational_item_service = OperationalItemService(
+        operational_item_repository,
+    )
 
     microsoft_graph_token_provider = (
         MicrosoftGraphTokenProvider()
@@ -270,11 +283,21 @@ def bootstrap(
             llm_client,
         )
     )
+    operational_understanding = (
+        LLMOperationalUnderstanding(
+            llm_client,
+        )
+    )
     observation_registry = ObservationRuleRegistry()
 
     observation_registry.register(
         KnowledgeObservationRule(
             knowledge_understanding,
+        ),
+    )
+    observation_registry.register(
+        OperationalObservationRule(
+            operational_understanding,
         ),
     )
     observation_extractor = (
@@ -288,6 +311,9 @@ def bootstrap(
 
     organization_registry.register(
         KnowledgeOrganizationRule(),
+    )
+    organization_registry.register(
+        OperationalOrganizationRule(),
     )
 
     organization_builder = (
@@ -322,12 +348,14 @@ def bootstrap(
         knowledge_validator=validator,
         knowledge_acceptance_service=knowledge_acceptance_service,
         reasoning_service=reasoning,
+        operational_item_service=operational_item_service,
     )
 
     engine = SimpleCognitiveEngine(
         pipeline,
         reasoning,
         activity_question_service,
+        operational_item_service=operational_item_service,
         knowledge_base_retrieval_service=knowledge_base_retrieval,
         knowledge_base_answer_service=knowledge_base_answer,
     )

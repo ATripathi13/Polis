@@ -1,4 +1,4 @@
-"""
+﻿"""
 POLIS cognitive execution pipeline.
 """
 
@@ -16,6 +16,7 @@ class PolisPipeline:
         knowledge_validator,
         knowledge_acceptance_service,   # <-- NEW
         reasoning_service,
+        operational_item_service=None,
     ):
 
         self._communication_service = communication_service
@@ -40,6 +41,8 @@ class PolisPipeline:
             reasoning_service
         )
         self._knowledge_acceptance_service = knowledge_acceptance_service
+        self._operational_item_service = operational_item_service
+
     def process(
         self,
         communication,
@@ -67,6 +70,12 @@ class PolisPipeline:
 
         for event in organization_events:
 
+            if self._operational_item_service is not None:
+                self._operational_item_service.process_event(
+                    event,
+                    source_type=communication.source.value,
+                )
+
             candidates = (
                 self._knowledge_builder.build(
                     event,
@@ -88,6 +97,5 @@ class PolisPipeline:
                     ValidationStatus.UPDATED,
                 ):
                     self._knowledge_acceptance_service.accept(result)
-            print("VALIDATED:", result)                
 
         return validated

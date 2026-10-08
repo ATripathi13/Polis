@@ -537,3 +537,89 @@ class ReminderModel(Base):
         DateTime(timezone=True),
         nullable=False,
     )
+
+class OperationalItemModel(Base):
+    __tablename__ = "operational_items"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+
+    item_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    summary: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    priority: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    owner_id: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        index=True,
+    )
+
+    owner_name: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
+    due_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+    )
+
+    source_event_id: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        index=True,
+    )
+
+    source_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    confidence: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+    )
+
+    evidence: Mapped[list] = mapped_column(
+        JSONB,
+        nullable=False,
+    )
+
+    metadata_: Mapped[dict] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )

@@ -32,6 +32,7 @@ class SimpleCognitiveEngine(
         pipeline: PolisPipeline,
         question_answering: QuestionAnsweringService,
         activity_question_service=None,
+        operational_item_service=None,
         knowledge_base_retrieval_service=None,
         knowledge_base_answer_service=None,
     ) -> None:
@@ -44,6 +45,10 @@ class SimpleCognitiveEngine(
 
         self._activity_question_service = (
             activity_question_service
+        )
+
+        self._operational_item_service = (
+            operational_item_service
         )
 
         self._knowledge_base_retrieval_service = (
@@ -128,6 +133,15 @@ class SimpleCognitiveEngine(
                 )
             )
 
+            operational_evidence: list[str] = []
+
+            if self._operational_item_service is not None:
+                operational_evidence = (
+                    self._operational_item_service.retrieve_evidence(
+                        question,
+                    )
+                )
+
             knowledge_base_evidence: list[str] = []
 
             if (
@@ -171,6 +185,7 @@ class SimpleCognitiveEngine(
 
             unified_evidence = (
                 organizational_evidence
+                + operational_evidence
                 + knowledge_base_evidence
             )
 
