@@ -16,6 +16,8 @@ from engines.communication.domain.aggregates import (
 )
 
 from application.cognitive import CognitiveEngine
+from application.activity import ActivityProcessor
+from engines.slack.dto import SlackMessage
 
 
 class SlackService:
@@ -28,10 +30,12 @@ class SlackService:
         normalizer: SlackNormalizer,
         communication_service: CommunicationService,
         cognitive_engine: CognitiveEngine,
+        activity_processor: ActivityProcessor | None = None,
     ) -> None:
         self._normalizer = normalizer
         self._communication_service = communication_service
         self._cognitive_engine = cognitive_engine
+        self._activity_processor = activity_processor
 
     def ingest(
         self,
@@ -57,6 +61,19 @@ class SlackService:
         saved = self._communication_service.process(
             command,
         )
+
+        if self._activity_processor is not None:
+            self._activity_processor.process(
+                SlackMessage(
+                    user=event.user.user_id,
+                    channel=event.channel.channel_id,
+                    text=event.message.text,
+                    ts=event.message.ts,
+                    event_ts=event.message.ts,
+                    thread_ts=event.message.thread_ts,
+                    user_name=event.user.username,
+                )
+            )
 
         # Send the communication into the POLIS
         # cognitive engine.

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Dependency providers.
 """
 
@@ -103,6 +103,7 @@ _slack_service = SlackService(
     normalizer=_normalizer,
     communication_service=_service,
     cognitive_engine=_cognitive_engine,
+    activity_processor=_application.activity_processor,
 )
 
 
