@@ -73,3 +73,39 @@ def test_slack_service_forwards_activity_to_people_processor():
     assert message.user_name == "Akshat"
 
     assert cognitive_engine.learned == ["persisted-communication"]
+
+def test_slack_service_continues_when_activity_processing_fails():
+    class FailingActivityProcessor:
+        def process(self, message):
+            raise RuntimeError("activity failure")
+
+    cognitive_engine = FakeCognitiveEngine()
+
+    service = SlackService(
+        normalizer=FakeNormalizer(),
+        communication_service=FakeCommunicationService(),
+        cognitive_engine=cognitive_engine,
+        activity_processor=FailingActivityProcessor(),
+    )
+
+    event = SlackEvent(
+        user=SlackUser(
+            user_id="U123",
+            username="Akshat",
+        ),
+        channel=SlackChannel(
+            channel_id="C123",
+            name="general",
+        ),
+        message=ConnectorSlackMessage(
+            text="starting work",
+            ts="9999999999.004",
+            thread_ts=None,
+        ),
+    )
+
+    service.ingest(event)
+
+    assert cognitive_engine.learned == [
+        "persisted-communication"
+    ]

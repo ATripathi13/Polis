@@ -63,17 +63,24 @@ class SlackService:
         )
 
         if self._activity_processor is not None:
-            self._activity_processor.process(
-                SlackMessage(
-                    user=event.user.user_id,
-                    channel=event.channel.channel_id,
-                    text=event.message.text,
-                    ts=event.message.ts,
-                    event_ts=event.message.ts,
-                    thread_ts=event.message.thread_ts,
-                    user_name=event.user.username,
+            try:
+                self._activity_processor.process(
+                    SlackMessage(
+                        user=event.user.user_id,
+                        channel=event.channel.channel_id,
+                        text=event.message.text,
+                        ts=event.message.ts,
+                        event_ts=event.message.ts,
+                        thread_ts=event.message.thread_ts,
+                        user_name=event.user.username,
+                    )
                 )
-            )
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).exception(
+                    "Failed to record Slack activity for People Agent"
+                )
 
         # Send the communication into the POLIS
         # cognitive engine.
