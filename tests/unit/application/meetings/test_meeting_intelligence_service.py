@@ -113,3 +113,40 @@ def test_summarize_handles_llm_failure():
     )
     assert result.confidence == 0.0
     assert len(result.evidence) == 1
+
+def test_summarize_chunks_long_meeting_transcript():
+    repository = FakeTranscriptRepository(
+        [
+            make_transcript(
+                "meeting-long",
+                "\n\n".join(
+                    "A" * 10000
+                    for _ in range(5)
+                ),
+            )
+        ]
+    )
+
+    class RecordingLLM:
+        def __init__(self):
+            self.calls = []
+
+        def generate(self, prompt):
+            self.calls.append(prompt)
+            return "Section summary."
+
+    llm = RecordingLLM()
+
+    service = MeetingIntelligenceService(
+        transcript_repository=repository,
+        llm_client=llm,
+    )
+
+    result = service.summarize("meeting-long")
+
+    assert result.text == "Section summary."
+    assert len(llm.calls) == 4
+    assert all("meeting-long" in prompt for prompt in llm.calls)
+    assert len(llm.calls[0]) < 25000
+    assert len(llm.calls[1]) < 25000
+    assert len(llm.calls[2]) < 25000
