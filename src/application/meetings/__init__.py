@@ -1,4 +1,4 @@
-﻿from .meeting_transcript_service import MeetingTranscriptService
+from .meeting_transcript_service import MeetingTranscriptService
 from .meeting_transcript_input import MeetingTranscriptInput
 from .meeting_transcript_provider import MeetingTranscriptProvider
 from .meeting_recording_input import MeetingRecordingInput
@@ -13,3 +13,5 @@ __all__ = [
     "MeetingRecordingProvider",
     "TeamsSubscriptionService",
 ]
+
+from .meeting_intelligence_service import MeetingIntelligenceService

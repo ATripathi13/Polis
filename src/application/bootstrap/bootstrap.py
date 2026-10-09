@@ -11,6 +11,9 @@ from infrastructure.llm.knowledge_understanding import (
 from infrastructure.llm.operational_understanding import (
     LLMOperationalUnderstanding,
 )
+from infrastructure.llm.organizational_intent_understanding import (
+    LLMOrganizationalIntentUnderstanding,
+)
 from infrastructure.vector import (
     QdrantKnowledgeBaseRepository,
 )
@@ -61,6 +64,7 @@ from infrastructure.database import (
     PostgreSQLKnowledgeRepository,
     PostgreSQLActivityRepository,
     PostgreSQLOperationalItemRepository,
+    PostgreSQLOrganizationEventRepository,
 )
 
 from engines.communication.infrastructure.repositories import (
@@ -69,6 +73,7 @@ from engines.communication.infrastructure.repositories import (
 
 from application.meetings import (
     MeetingTranscriptService,
+    MeetingIntelligenceService,
 )
 
 from domain.reminders.services import (
@@ -94,6 +99,8 @@ from infrastructure.database import (
 from domain.observation import (
     KnowledgeObservationRule,
     OperationalObservationRule,
+    OrganizationalIntentObservationRule,
+    QuestionObservationRule,
     ObservationRuleRegistry,
     RuleBasedObservationExtractor,
 )
@@ -101,6 +108,7 @@ from domain.observation import (
 from domain.organization import (
     KnowledgeOrganizationRule,
     OperationalOrganizationRule,
+    QuestionOrganizationRule,
     OrganizationEventRuleRegistry,
     RuleBasedOrganizationEventBuilder,
 )
@@ -165,6 +173,9 @@ def bootstrap(
     )
     reminder_repository = PostgreSQLReminderRepository()
     operational_item_repository = PostgreSQLOperationalItemRepository()
+    organization_event_repository = (
+        PostgreSQLOrganizationEventRepository()
+    )
     operational_item_service = OperationalItemService(
         operational_item_repository,
     )
@@ -236,6 +247,10 @@ def bootstrap(
     )
 
     llm_client = OpenRouterClient()
+    meeting_intelligence_service = MeetingIntelligenceService(
+        transcript_repository=meeting_transcript_repository,
+        llm_client=llm_client,
+    )
 
     knowledge_base_vector_repository = (
         QdrantKnowledgeBaseRepository()
@@ -288,6 +303,11 @@ def bootstrap(
             llm_client,
         )
     )
+    organizational_intent_understanding = (
+        LLMOrganizationalIntentUnderstanding(
+            llm_client,
+        )
+    )
     observation_registry = ObservationRuleRegistry()
 
     observation_registry.register(
@@ -296,8 +316,16 @@ def bootstrap(
         ),
     )
     observation_registry.register(
+        QuestionObservationRule(),
+    )
+    observation_registry.register(
         OperationalObservationRule(
             operational_understanding,
+        ),
+    )
+    observation_registry.register(
+        OrganizationalIntentObservationRule(
+            organizational_intent_understanding,
         ),
     )
     observation_extractor = (
@@ -311,6 +339,9 @@ def bootstrap(
 
     organization_registry.register(
         KnowledgeOrganizationRule(),
+    )
+    organization_registry.register(
+        QuestionOrganizationRule(),
     )
     organization_registry.register(
         OperationalOrganizationRule(),
@@ -349,6 +380,7 @@ def bootstrap(
         knowledge_acceptance_service=knowledge_acceptance_service,
         reasoning_service=reasoning,
         operational_item_service=operational_item_service,
+        organization_event_repository=organization_event_repository,
     )
 
     engine = SimpleCognitiveEngine(
@@ -366,6 +398,7 @@ def bootstrap(
         activity_processor=activity_processor,
         activity_question_service=activity_question_service,
         meeting_transcript_service=meeting_transcript_service,
+        meeting_intelligence_service=meeting_intelligence_service,
         meeting_transcript_provider=microsoft_teams_transcript_provider,
         meeting_recording_provider=microsoft_teams_recording_provider,
         teams_subscription_repository=teams_subscription_repository,

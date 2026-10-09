@@ -45,5 +45,6 @@ class QuestionObservationRule(
                 observation_type=ObservationType.QUESTION,
                 summary=communication.content.body,
                 confidence=1.0,
+                evidence=[communication.source_event_id],
             )
         ]

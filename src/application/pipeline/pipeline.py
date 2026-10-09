@@ -17,6 +17,7 @@ class PolisPipeline:
         knowledge_acceptance_service,   # <-- NEW
         reasoning_service,
         operational_item_service=None,
+        organization_event_repository=None,
     ):
 
         self._communication_service = communication_service
@@ -42,6 +43,9 @@ class PolisPipeline:
         )
         self._knowledge_acceptance_service = knowledge_acceptance_service
         self._operational_item_service = operational_item_service
+        self._organization_event_repository = (
+            organization_event_repository
+        )
 
     def process(
         self,
@@ -64,6 +68,25 @@ class PolisPipeline:
             )
         )
         print("ORG EVENTS:", organization_events)
+
+        if self._organization_event_repository is not None:
+            for event in organization_events:
+                source_event_id = next(
+                    (
+                        evidence
+                        for observation in event.observations
+                        for evidence in observation.evidence
+                        if evidence and evidence.strip()
+                    ),
+                    None,
+                )
+
+                if source_event_id:
+                    self._organization_event_repository.save(
+                        event,
+                        source_type=communication.source.value,
+                        source_event_id=source_event_id,
+                    )
 
         # Step 3
         validated = []

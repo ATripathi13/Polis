@@ -4,6 +4,8 @@ Rule-based organizational event builder.
 
 from __future__ import annotations
 
+import logging
+
 from domain.observation import (
     Observation,
 )
@@ -19,6 +21,8 @@ from domain.organization.services import (
 from domain.organization.value_objects import (
     OrganizationEvent,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class RuleBasedOrganizationEventBuilder(
@@ -43,10 +47,17 @@ class RuleBasedOrganizationEventBuilder(
 
         for rule in self._registry.rules:
 
-            events.extend(
-                rule.build(
-                    observations,
+            try:
+                events.extend(
+                    rule.build(
+                        observations,
+                    )
                 )
-            )
+            except Exception:
+                logger.exception(
+                    "Organization event rule failed: %s",
+                    type(rule).__name__,
+                )
+                continue
 
         return events

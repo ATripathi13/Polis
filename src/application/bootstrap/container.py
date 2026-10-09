@@ -28,6 +28,7 @@ from application.meetings import (
     MeetingTranscriptProvider,
     MeetingRecordingProvider,
     TeamsSubscriptionService,
+    MeetingIntelligenceService,
 )
 
 from domain.meetings import (
@@ -65,6 +66,8 @@ class ApplicationContainer:
     activity_question_service: ActivityQuestionService
 
     meeting_transcript_service: MeetingTranscriptService
+
+    meeting_intelligence_service: MeetingIntelligenceService
 
     meeting_transcript_provider: MeetingTranscriptProvider
 

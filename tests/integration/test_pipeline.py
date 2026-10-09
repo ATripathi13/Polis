@@ -9,6 +9,8 @@ from domain.knowledge import (
 )
 
 from domain.organization import (
+    InMemoryOrganizationEventRepository,
+    OrganizationEventType,
     OrganizationEventRuleRegistry,
     RuleBasedOrganizationEventBuilder,
 )
@@ -144,6 +146,9 @@ def test_polis_pipeline():
         repository,
         NullKnowledgeIndexer(),
     )
+    organization_event_repository = (
+        InMemoryOrganizationEventRepository()
+    )
 
     pipeline = PolisPipeline(
         communication_service=None,
@@ -153,6 +158,7 @@ def test_polis_pipeline():
         knowledge_validator=validator,
         knowledge_acceptance_service=knowledge_acceptance_service,
         reasoning_service=None,
+        organization_event_repository=organization_event_repository,
     )
 
 
@@ -175,3 +181,12 @@ def test_polis_pipeline():
         stored[0].summary
         == "We use PostgreSQL."
     )
+
+    persisted_event = organization_event_repository.find_by_source_event(
+        'slack',
+        '1',
+        OrganizationEventType.KNOWLEDGE_DISCOVERED,
+    )
+
+    assert persisted_event is not None
+    assert persisted_event.summary == 'We use PostgreSQL.'

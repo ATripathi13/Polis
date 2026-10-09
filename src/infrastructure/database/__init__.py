@@ -28,6 +28,10 @@ from .operational_item_repository import (
     PostgreSQLOperationalItemRepository,
 )
 
+from .organization_event_repository import (
+    PostgreSQLOrganizationEventRepository,
+)
+
 from .knowledge_base_repository import (
     PostgreSQLKnowledgeBaseChunkRepository,
     PostgreSQLKnowledgeBaseDocumentRepository,
@@ -45,4 +49,5 @@ __all__ = [
     "PostgreSQLOperationalItemRepository",
     "PostgreSQLKnowledgeBaseDocumentRepository",
     "PostgreSQLKnowledgeBaseChunkRepository",
+    "PostgreSQLOrganizationEventRepository",
 ]

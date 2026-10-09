@@ -191,6 +191,14 @@ def get_meeting_transcript_service():
 
     return _application.meeting_transcript_service
 
+
+def get_meeting_intelligence_service():
+    """
+    Return the shared meeting intelligence service.
+    """
+
+    return _application.meeting_intelligence_service
+
     
 def get_meeting_recording_provider():
     """

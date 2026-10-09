@@ -623,3 +623,62 @@ class OperationalItemModel(Base):
         DateTime(timezone=True),
         nullable=False,
     )
+
+from sqlalchemy import UniqueConstraint
+
+
+class OrganizationEventModel(Base):
+    __tablename__ = "organization_events"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source_type",
+            "source_event_id",
+            "event_type",
+            name="uq_organization_events_source_event_type",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+
+    event_type: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        index=True,
+    )
+
+    summary: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+
+    observations: Mapped[list] = mapped_column(
+        JSONB,
+        default=list,
+        nullable=False,
+    )
+
+    confidence: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+    )
+
+    source_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    source_event_id: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        index=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )

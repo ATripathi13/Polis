@@ -34,6 +34,10 @@ def test_extract_question_observation():
         == ObservationType.QUESTION
     )
 
+    assert observations[0].evidence == [
+        "1712345678.123456"
+    ]
+
 
 def test_ignore_non_question():
 
