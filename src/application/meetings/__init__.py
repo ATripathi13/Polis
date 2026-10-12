@@ -12,6 +12,9 @@ __all__ = [
     "MeetingRecordingInput",
     "MeetingRecordingProvider",
     "TeamsSubscriptionService",
+    "MeetingIntelligenceService",
+    "MeetingIntelligenceResult",
 ]
 
 from .meeting_intelligence_service import MeetingIntelligenceService
+from .meeting_intelligence_result import MeetingIntelligenceResult

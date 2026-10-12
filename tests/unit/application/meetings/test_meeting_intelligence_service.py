@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from application.meetings.meeting_intelligence_service import (
     MeetingIntelligenceService,
@@ -150,3 +151,95 @@ def test_summarize_chunks_long_meeting_transcript():
     assert len(llm.calls[0]) < 25000
     assert len(llm.calls[1]) < 25000
     assert len(llm.calls[2]) < 25000
+
+def test_analyze_returns_structured_meeting_intelligence():
+    class FakeOrganizationEventRepository:
+        def all(self):
+            return [
+                SimpleNamespace(
+                    event_type=SimpleNamespace(value="task_created"),
+                    summary="Publish the release notes.",
+                    confidence=0.9,
+                    observations=[
+                        SimpleNamespace(
+                            evidence=["transcript-001:10.000:15.000:Alice"]
+                        )
+                    ],
+                ),
+                SimpleNamespace(
+                    event_type=SimpleNamespace(value="decision_made"),
+                    summary="Release Friday.",
+                    confidence=0.95,
+                    observations=[
+                        SimpleNamespace(
+                            evidence=["transcript-001:20.000:25.000:Bob"]
+                        )
+                    ],
+                ),
+            ]
+
+    class StructuredLLM:
+        def __init__(self):
+            self.prompt = None
+
+        def generate(self, prompt):
+            self.prompt = prompt
+            return """
+{
+  "summary": "The team aligned on the Friday release.",
+  "topics": ["Release plan"],
+  "decisions": ["Release Friday"],
+  "action_items": ["Publish the release notes."],
+  "risks": [],
+  "open_questions": [],
+  "confidence": 0.92
+}
+""".strip()
+
+    repository = FakeTranscriptRepository(
+        [
+            make_transcript(
+                "meeting-structured",
+                "Alice: We need to publish the release notes.\n\n"
+                "Bob: We will release Friday.",
+            )
+        ]
+    )
+    repository.transcripts[0].metadata["transcript_id"] = "transcript-001"
+
+    llm = StructuredLLM()
+
+    service = MeetingIntelligenceService(
+        transcript_repository=repository,
+        llm_client=llm,
+        organization_event_repository=FakeOrganizationEventRepository(),
+    )
+
+    result = service.analyze("meeting-structured")
+
+    assert result.summary == "The team aligned on the Friday release."
+    assert result.topics == ["Release plan"]
+    assert result.decisions == ["Release Friday"]
+    assert result.action_items == ["Publish the release notes."]
+    assert result.risks == []
+    assert result.open_questions == []
+    assert result.confidence == 0.92
+    assert "Publish the release notes." in llm.prompt
+    assert "Release Friday." in llm.prompt
+
+
+def test_analyze_returns_fallback_when_meeting_transcript_missing():
+    repository = FakeTranscriptRepository([])
+    llm = FakeLLMClient("unused")
+
+    service = MeetingIntelligenceService(
+        transcript_repository=repository,
+        llm_client=llm,
+        organization_event_repository=None,
+    )
+
+    try:
+        service.analyze("missing-meeting")
+        assert False, "Expected ValueError"
+    except ValueError as exc:
+        assert str(exc) == "Meeting transcript not found."
