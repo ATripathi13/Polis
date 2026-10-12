@@ -152,3 +152,39 @@ def test_get_transcript_decodes_utf8_transcript_content():
 
     assert result is not None
     assert "कुछ नहीं करो काम।" in result.transcript
+
+def test_get_meeting_metadata_returns_authoritative_fields():
+    response = Mock()
+    response.status_code = 200
+    response.json.return_value = {
+        "subject": "Weekly Planning",
+        "startDateTime": "2026-10-12T10:00:00Z",
+        "endDateTime": "2026-10-12T10:30:00Z",
+    }
+
+    access_token_provider = Mock(return_value="test-access-token")
+    provider = MicrosoftTeamsTranscriptProvider(access_token_provider)
+
+    with patch(
+        "infrastructure.meetings.microsoft_teams_transcript_provider.requests.get",
+        return_value=response,
+    ) as mock_get:
+        result = provider.get_meeting_metadata(
+            user_id="user-123",
+            online_meeting_id="meeting-456",
+        )
+
+    assert result == {
+        "title": "Weekly Planning",
+        "started_at": "2026-10-12T10:00:00Z",
+        "ended_at": "2026-10-12T10:30:00Z",
+    }
+
+    mock_get.assert_called_once_with(
+        "https://graph.microsoft.com/v1.0/users/user-123/onlineMeetings/meeting-456",
+        headers={
+            "Authorization": "Bearer test-access-token",
+            "Accept": "application/json",
+        },
+        timeout=30.0,
+    )

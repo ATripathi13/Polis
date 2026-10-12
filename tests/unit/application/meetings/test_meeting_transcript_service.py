@@ -15,6 +15,19 @@ class FakeMeetingTranscriptRepository:
         self.saved.append(transcript)
 
 
+class FakeMeetingRepository:
+    def __init__(self):
+        self.saved = []
+        self.meetings = {}
+
+    def save(self, meeting):
+        self.saved.append(meeting)
+        self.meetings[meeting.external_id] = meeting
+
+    def find_by_external_id(self, external_id):
+        return self.meetings.get(external_id)
+
+
 def test_ingest_creates_and_persists_transcript():
     repository = FakeMeetingTranscriptRepository()
     service = MeetingTranscriptService(repository)
@@ -112,3 +125,43 @@ def test_ingest_uses_transcript_id_as_stable_identifier():
 
     assert len(repository.saved) == 1
     assert repository.saved[0] is result
+
+def test_ingest_creates_canonical_meeting_when_metadata_exists():
+    repository = FakeMeetingTranscriptRepository()
+    meeting_repository = FakeMeetingRepository()
+
+    service = MeetingTranscriptService(
+        repository,
+        meeting_repository=meeting_repository,
+    )
+
+    captured_at = datetime.now(timezone.utc)
+
+    data = MeetingTranscriptInput(
+        meeting_id="meeting-004",
+        transcript="The team agreed to ship Friday.",
+        source="Microsoft Teams",
+        captured_at=captured_at,
+        metadata={
+            "meeting_title": "Weekly Planning",
+            "meeting_started_at": "2026-10-12T10:00:00Z",
+            "meeting_ended_at": "2026-10-12T10:30:00Z",
+        },
+    )
+
+    result = service.ingest(data)
+
+    assert isinstance(result, MeetingTranscript)
+    assert len(meeting_repository.saved) == 1
+
+    meeting = meeting_repository.saved[0]
+
+    assert meeting.external_id == "meeting-004"
+    assert meeting.title == "Weekly Planning"
+    assert meeting.source == "Microsoft Teams"
+    assert meeting.started_at == datetime(
+        2026, 10, 12, 10, 0, tzinfo=timezone.utc
+    )
+    assert meeting.ended_at == datetime(
+        2026, 10, 12, 10, 30, tzinfo=timezone.utc
+    )

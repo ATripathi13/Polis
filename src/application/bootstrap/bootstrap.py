@@ -71,6 +71,10 @@ from engines.communication.infrastructure.repositories import (
     PostgreSQLCommunicationRepository,
 )
 
+from infrastructure.database.meeting_repository import (
+    PostgreSQLMeetingRepository,
+)
+
 from application.meetings import (
     MeetingTranscriptService,
     MeetingIntelligenceService,
@@ -169,6 +173,7 @@ def bootstrap(
     meeting_transcript_repository = (
         PostgreSQLMeetingTranscriptRepository()
     )
+    meeting_repository = PostgreSQLMeetingRepository()
     teams_subscription_repository = (
         PostgreSQLTeamsSubscriptionRepository()
     )
@@ -219,6 +224,7 @@ def bootstrap(
     )
     meeting_transcript_service = MeetingTranscriptService(
         repository=meeting_transcript_repository,
+        meeting_repository=meeting_repository,
     )
     attendance_calculator = AttendanceCalculator()
 

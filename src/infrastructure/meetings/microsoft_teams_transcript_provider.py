@@ -161,19 +161,75 @@ class MicrosoftTeamsTranscriptProvider(MeetingTranscriptProvider):
         if not transcript_text:
             return None
 
+        meeting_metadata = self.get_meeting_metadata(
+            user_id=user_id,
+            online_meeting_id=online_meeting_id,
+        )
+
+        metadata = {
+            "provider": "microsoft_graph",
+            "user_id": user_id,
+            "online_meeting_id": online_meeting_id,
+            "transcript_id": transcript_id,
+        }
+
+        if meeting_metadata is not None:
+            if meeting_metadata.get("title"):
+                metadata["meeting_title"] = meeting_metadata["title"]
+            if meeting_metadata.get("started_at"):
+                metadata["meeting_started_at"] = meeting_metadata["started_at"]
+            if meeting_metadata.get("ended_at"):
+                metadata["meeting_ended_at"] = meeting_metadata["ended_at"]
+
         return MeetingTranscriptInput(
             meeting_id=online_meeting_id,
             transcript=transcript_text,
             source="Microsoft Teams",
             captured_at=datetime.now().astimezone(),
             participants=[],
-            metadata={
-                "provider": "microsoft_graph",
-                "user_id": user_id,
-                "online_meeting_id": online_meeting_id,
-                "transcript_id": transcript_id,
-            },
+            metadata=metadata,
         )
+    def get_meeting_metadata(
+        self,
+        *,
+        user_id: str,
+        online_meeting_id: str,
+    ) -> dict[str, Any] | None:
+        """
+        Retrieve authoritative Teams meeting metadata through Microsoft Graph.
+        """
+        access_token = self.access_token_provider()
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        }
+
+        meeting_url = (
+            f"{self.GRAPH_BASE_URL}"
+            f"/users/{user_id}"
+            f"/onlineMeetings/{online_meeting_id}"
+        )
+
+        response = requests.get(
+            meeting_url,
+            headers=headers,
+            timeout=self.timeout,
+        )
+
+        if response.status_code == 404:
+            return None
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        return {
+            "title": data.get("subject"),
+            "started_at": data.get("startDateTime"),
+            "ended_at": data.get("endDateTime"),
+        }
+
     @staticmethod
     def _parse_datetime(
         value: str | None,
