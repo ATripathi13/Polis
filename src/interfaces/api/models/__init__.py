@@ -6,6 +6,7 @@ from .question import (
     QuestionRequest,
     AnswerResponse,
 )
+from .meeting_intelligence import MeetingIntelligenceResponse
 ""
 
 __all__ = [
@@ -13,4 +14,5 @@ __all__ = [
     "SlackEventRequest",
     "QuestionRequest",
     "AnswerResponse",
+    "MeetingIntelligenceResponse",
 ]
