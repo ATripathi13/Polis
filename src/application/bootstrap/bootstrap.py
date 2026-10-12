@@ -257,6 +257,7 @@ def bootstrap(
     meeting_intelligence_service = MeetingIntelligenceService(
         transcript_repository=meeting_transcript_repository,
         llm_client=llm_client,
+        organization_event_repository=organization_event_repository,
     )
 
     knowledge_base_vector_repository = (
