@@ -108,6 +108,7 @@ from domain.observation import (
 from domain.organization import (
     KnowledgeOrganizationRule,
     OperationalOrganizationRule,
+    OrganizationalIntentOrganizationRule,
     QuestionOrganizationRule,
     OrganizationEventRuleRegistry,
     RuleBasedOrganizationEventBuilder,
@@ -345,6 +346,9 @@ def bootstrap(
     )
     organization_registry.register(
         OperationalOrganizationRule(),
+    )
+    organization_registry.register(
+        OrganizationalIntentOrganizationRule(),
     )
 
     organization_builder = (
