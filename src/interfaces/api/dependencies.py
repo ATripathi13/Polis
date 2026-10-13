@@ -52,3 +52,13 @@ def get_activity_processor() -> ActivityProcessor:
     container = get_container()
 
     return container.activity_processor
+
+
+def get_knowledge_agent():
+    """
+    Return the specialist Knowledge Agent.
+    """
+
+    container = get_container()
+
+    return container.knowledge_agent

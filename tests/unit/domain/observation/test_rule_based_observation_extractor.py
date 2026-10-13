@@ -13,7 +13,7 @@ from engines.communication.domain.value_objects import (
     Content,
 )
 
-from unit.communication.test_communication_event import (
+from tests.unit.communication.test_communication_event import (
     create_test_event,
 )
 

@@ -3,6 +3,7 @@ POLIS cognitive execution pipeline.
 """
 
 from __future__ import annotations
+from domain.knowledge.enums import KnowledgeStatus
 from domain.knowledge.validators import ValidationStatus
 
 class PolisPipeline:
@@ -18,6 +19,7 @@ class PolisPipeline:
         reasoning_service,
         operational_item_service=None,
         organization_event_repository=None,
+        knowledge_agent=None,
     ):
 
         self._communication_service = communication_service
@@ -46,6 +48,7 @@ class PolisPipeline:
         self._organization_event_repository = (
             organization_event_repository
         )
+        self._knowledge_agent = knowledge_agent
 
     def process(
         self,
@@ -125,6 +128,30 @@ class PolisPipeline:
                     source_type=source_type,
                     source_event_id=source_event_id,
                 )
+
+            if self._knowledge_agent is not None:
+                source_event_id = canonical_source_event_id
+                if not source_event_id:
+                    source_event_id = next(
+                        (
+                            evidence
+                            for observation in event.observations
+                            for evidence in observation.evidence
+                            if evidence and evidence.strip()
+                        ),
+                        "",
+                    )
+                knowledge_result = self._knowledge_agent.process_event(
+                    event,
+                    source_type=source_type,
+                    source_event_id=source_event_id,
+                    persist=False,
+                )
+                if (
+                    knowledge_result is not None
+                    and knowledge_result.status == KnowledgeStatus.CONFLICTING
+                ):
+                    continue
 
             candidates = (
                 self._knowledge_builder.build(

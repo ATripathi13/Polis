@@ -44,6 +44,9 @@ from application.services.knowledge_acceptance_service import (
 from application.operations import (
     OperationalItemService,
 )
+from application.knowledge import (
+    KnowledgeAgent,
+)
 
 from domain.knowledge import (
     KnowledgeDiscoveryRule,
@@ -382,6 +385,14 @@ def bootstrap(
         ranker=KeywordRanker(),
     )
 
+    knowledge_agent = KnowledgeAgent(
+        knowledge_repository=repository,
+        retrieval_service=knowledge_base_retrieval,
+        answer_service=knowledge_base_answer,
+        llm_client=llm_client,
+        organization_event_repository=organization_event_repository,
+    )
+
     pipeline = PolisPipeline(
         communication_service=None,
         observation_extractor=observation_extractor,
@@ -392,6 +403,7 @@ def bootstrap(
         reasoning_service=reasoning,
         operational_item_service=operational_item_service,
         organization_event_repository=organization_event_repository,
+        knowledge_agent=knowledge_agent,
     )
 
     engine = SimpleCognitiveEngine(
@@ -401,6 +413,7 @@ def bootstrap(
         operational_item_service=operational_item_service,
         knowledge_base_retrieval_service=knowledge_base_retrieval,
         knowledge_base_answer_service=knowledge_base_answer,
+        knowledge_agent=knowledge_agent,
     )
     return ApplicationContainer(
         engine=engine,
@@ -420,6 +433,7 @@ def bootstrap(
         reminder_repository=reminder_repository,
         reminder_service=reminder_service,
         knowledge_base_ingestion_service=knowledge_base_ingestion,
+        knowledge_agent=knowledge_agent,
     )
 
 

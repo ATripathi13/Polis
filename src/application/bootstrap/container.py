@@ -1,4 +1,4 @@
-﻿"""
+"""
 Application container.
 """
 
@@ -47,6 +47,10 @@ from application.knowledge_base import (
     KnowledgeBaseIngestionService,
 )
 
+from application.knowledge import (
+    KnowledgeAgent,
+)
+
 
 @dataclass(slots=True)
 class ApplicationContainer:
@@ -82,4 +86,6 @@ class ApplicationContainer:
     reminder_repository: ReminderRepository
 
     reminder_service: ReminderService
+
+    knowledge_agent: KnowledgeAgent | None = None
 

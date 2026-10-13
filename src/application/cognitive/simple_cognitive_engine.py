@@ -35,6 +35,7 @@ class SimpleCognitiveEngine(
         operational_item_service=None,
         knowledge_base_retrieval_service=None,
         knowledge_base_answer_service=None,
+        knowledge_agent=None,
     ) -> None:
 
         self._pipeline = pipeline
@@ -58,6 +59,12 @@ class SimpleCognitiveEngine(
         self._knowledge_base_answer_service = (
             knowledge_base_answer_service
         )
+
+        self._knowledge_agent = knowledge_agent
+
+    @property
+    def knowledge_agent(self):
+        return self._knowledge_agent
 
     def learn(
         self,
@@ -144,7 +151,15 @@ class SimpleCognitiveEngine(
 
             knowledge_base_evidence: list[str] = []
 
-            if (
+            if self._knowledge_agent is not None:
+                knowledge_base_evidence = (
+                    self._knowledge_agent.retrieve_evidence(
+                        question,
+                        limit=5,
+                    )
+                )
+
+            elif (
                 self._knowledge_base_retrieval_service
                 is not None
             ):
@@ -206,3 +221,14 @@ class SimpleCognitiveEngine(
         return self._question_answering.answer(
             question,
         )
+
+    def ask_knowledge(
+        self,
+        question: Question | str,
+    ):
+        """
+        Ask the specialist Knowledge Agent directly.
+        """
+        if self._knowledge_agent is not None:
+            return self._knowledge_agent.ask(question)
+        return None
