@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime
 from uuid import UUID
@@ -41,6 +41,20 @@ class PostgreSQLOperationalItemRepository(
             )
 
             if existing is not None:
+                existing.summary = item.summary
+                existing.status = item.status.value
+                existing.priority = item.priority.value
+                existing.owner_id = item.owner_id
+                existing.owner_name = item.owner_name
+                existing.due_at = item.due_at
+                existing.confidence = item.confidence
+                existing.evidence = list(item.evidence)
+                existing.metadata_ = dict(item.metadata)
+                existing.updated_at = datetime.now(
+                    existing.updated_at.tzinfo
+                )
+                session.commit()
+                session.refresh(existing)
                 return self._to_domain(existing)
 
             if item.source_event_id:
@@ -232,6 +246,29 @@ class PostgreSQLOperationalItemRepository(
             session.refresh(record)
 
             return self._to_domain(record)
+
+    def find_by_correlation(
+        self,
+        correlation_id: str,
+        *,
+        item_type: OperationalItemType | None = None,
+    ) -> list[OperationalItem]:
+        with SessionLocal() as session:
+            query = session.query(OperationalItemModel).filter(
+                OperationalItemModel.metadata_["correlation_id"].astext
+                == str(correlation_id)
+            )
+
+            if item_type is not None:
+                query = query.filter(
+                    OperationalItemModel.item_type == item_type.value
+                )
+
+            records = query.order_by(
+                OperationalItemModel.created_at.desc()
+            ).all()
+
+            return [self._to_domain(record) for record in records]
 
     @staticmethod
     def _to_domain(

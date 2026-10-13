@@ -62,3 +62,13 @@ def get_knowledge_agent():
     container = get_container()
 
     return container.knowledge_agent
+
+
+def get_operations_agent():
+    """
+    Return the specialist Operations Agent.
+    """
+
+    container = get_container()
+
+    return container.operations_agent

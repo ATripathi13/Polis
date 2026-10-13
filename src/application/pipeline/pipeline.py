@@ -6,6 +6,7 @@ from __future__ import annotations
 from domain.knowledge.enums import KnowledgeStatus
 from domain.knowledge.validators import ValidationStatus
 
+
 class PolisPipeline:
 
     def __init__(
@@ -20,6 +21,7 @@ class PolisPipeline:
         operational_item_service=None,
         organization_event_repository=None,
         knowledge_agent=None,
+        operations_agent=None,
     ):
 
         self._communication_service = communication_service
@@ -49,6 +51,15 @@ class PolisPipeline:
             organization_event_repository
         )
         self._knowledge_agent = knowledge_agent
+        self._operations_agent = operations_agent
+
+    @property
+    def operations_agent(self):
+        return self._operations_agent
+
+    @property
+    def knowledge_agent(self):
+        return self._knowledge_agent
 
     def process(
         self,
@@ -110,19 +121,27 @@ class PolisPipeline:
         validated = []
 
         for event in organization_events:
+            source_event_id = canonical_source_event_id
+            if not source_event_id:
+                source_event_id = next(
+                    (
+                        evidence
+                        for observation in event.observations
+                        for evidence in observation.evidence
+                        if evidence and evidence.strip()
+                    ),
+                    "",
+                )
 
-            if self._operational_item_service is not None:
-                source_event_id = canonical_source_event_id
-                if not source_event_id:
-                    source_event_id = next(
-                        (
-                            evidence
-                            for observation in event.observations
-                            for evidence in observation.evidence
-                            if evidence and evidence.strip()
-                        ),
-                        "",
-                    )
+            # Operations specialist processing: priority to operations_agent
+            if self._operations_agent is not None:
+                self._operations_agent.process_event(
+                    event,
+                    source_type=source_type,
+                    source_event_id=source_event_id,
+                    correlation_id=correlation_id,
+                )
+            elif self._operational_item_service is not None:
                 self._operational_item_service.process_event(
                     event,
                     source_type=source_type,
@@ -130,17 +149,6 @@ class PolisPipeline:
                 )
 
             if self._knowledge_agent is not None:
-                source_event_id = canonical_source_event_id
-                if not source_event_id:
-                    source_event_id = next(
-                        (
-                            evidence
-                            for observation in event.observations
-                            for evidence in observation.evidence
-                            if evidence and evidence.strip()
-                        ),
-                        "",
-                    )
                 knowledge_result = self._knowledge_agent.process_event(
                     event,
                     source_type=source_type,

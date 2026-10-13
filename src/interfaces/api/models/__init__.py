@@ -6,6 +6,7 @@ from .question import (
     QuestionRequest,
     AnswerResponse,
     KnowledgeResultResponse,
+    OperationsResultResponse,
 )
 from .meeting_intelligence import MeetingIntelligenceResponse
 
@@ -15,5 +16,6 @@ __all__ = [
     "QuestionRequest",
     "AnswerResponse",
     "KnowledgeResultResponse",
+    "OperationsResultResponse",
     "MeetingIntelligenceResponse",
 ]

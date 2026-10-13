@@ -23,11 +23,13 @@ from domain.organization import (
 from interfaces.api.dependencies import (
     get_cognitive_engine,
     get_knowledge_agent,
+    get_operations_agent,
 )
 from interfaces.api.models import (
     QuestionRequest,
     AnswerResponse,
     KnowledgeResultResponse,
+    OperationsResultResponse,
 )
 
 router = APIRouter(
@@ -128,4 +130,37 @@ def ask_knowledge(
         contradictions=contradictions_data,
         knowledge_changes=result.knowledge_changes,
         missing_aspects=result.missing_aspects,
+    )
+
+
+@router.post(
+    "/operations",
+    response_model=OperationsResultResponse,
+)
+def ask_operations(
+    request: QuestionRequest,
+    operations_agent=Depends(
+        get_operations_agent,
+    ),
+):
+    """
+    Direct Operations Agent specialist intelligence endpoint.
+    Returns operational evidence and summary for tasks, decisions, and risks.
+    """
+    if operations_agent is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Operations Agent specialist is not configured.",
+        )
+
+    question = Question(
+        text=request.question,
+        target_user_id=request.employee_slack_user_id,
+    )
+    result = operations_agent.ask(question)
+
+    return OperationsResultResponse(
+        question=result.get("question", request.question),
+        evidence=result.get("evidence", []),
+        summary=result.get("summary", {}),
     )

@@ -187,7 +187,7 @@ class KnowledgeAgent:
         status = (
             KnowledgeStatus.KNOWN
             if grounded_answer.confidence > 0.0
-            else KnowledgeStatus.MISSING
+            else KnowledgeStatus.UNCERTAIN
         )
 
         return KnowledgeResult(

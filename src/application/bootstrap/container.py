@@ -51,6 +51,10 @@ from application.knowledge import (
     KnowledgeAgent,
 )
 
+from application.operations import (
+    OperationsAgent,
+)
+
 
 @dataclass(slots=True)
 class ApplicationContainer:
@@ -88,4 +92,5 @@ class ApplicationContainer:
     reminder_service: ReminderService
 
     knowledge_agent: KnowledgeAgent | None = None
+    operations_agent: OperationsAgent | None = None
 

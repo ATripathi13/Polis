@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -58,3 +58,14 @@ class OperationalItemRepository(ABC):
         status: OperationalItemStatus,
     ) -> OperationalItem | None:
         raise NotImplementedError
+
+    def find_by_correlation(
+        self,
+        correlation_id: str,
+        *,
+        item_type: OperationalItemType | None = None,
+    ) -> list[OperationalItem]:
+        """
+        Find items sharing an organizational correlation identifier.
+        """
+        return []

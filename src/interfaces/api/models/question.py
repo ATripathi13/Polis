@@ -38,3 +38,13 @@ class KnowledgeResultResponse(BaseModel):
     contradictions: list[dict[str, Any]] = Field(default_factory=list)
     knowledge_changes: list[dict[str, Any]] = Field(default_factory=list)
     missing_aspects: list[str] = Field(default_factory=list)
+
+
+class OperationsResultResponse(BaseModel):
+    """
+    Detailed Operations Agent intelligence response.
+    """
+
+    question: str
+    evidence: list[str] = Field(default_factory=list)
+    summary: dict[str, Any] = Field(default_factory=dict)

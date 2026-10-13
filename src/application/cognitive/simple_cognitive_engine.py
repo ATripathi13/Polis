@@ -36,6 +36,7 @@ class SimpleCognitiveEngine(
         knowledge_base_retrieval_service=None,
         knowledge_base_answer_service=None,
         knowledge_agent=None,
+        operations_agent=None,
     ) -> None:
 
         self._pipeline = pipeline
@@ -61,10 +62,15 @@ class SimpleCognitiveEngine(
         )
 
         self._knowledge_agent = knowledge_agent
+        self._operations_agent = operations_agent
 
     @property
     def knowledge_agent(self):
         return self._knowledge_agent
+
+    @property
+    def operations_agent(self):
+        return self._operations_agent
 
     def learn(
         self,
@@ -142,7 +148,13 @@ class SimpleCognitiveEngine(
 
             operational_evidence: list[str] = []
 
-            if self._operational_item_service is not None:
+            if self._operations_agent is not None:
+                operational_evidence = (
+                    self._operations_agent.retrieve_evidence(
+                        question,
+                    )
+                )
+            elif self._operational_item_service is not None:
                 operational_evidence = (
                     self._operational_item_service.retrieve_evidence(
                         question,
@@ -231,4 +243,15 @@ class SimpleCognitiveEngine(
         """
         if self._knowledge_agent is not None:
             return self._knowledge_agent.ask(question)
+        return None
+
+    def ask_operations(
+        self,
+        question: Question | str,
+    ):
+        """
+        Ask the specialist Operations Agent directly.
+        """
+        if self._operations_agent is not None:
+            return self._operations_agent.ask(question)
         return None
