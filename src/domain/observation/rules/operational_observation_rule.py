@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from engines.communication.domain.aggregates import (
     CommunicationEvent,
@@ -78,6 +78,14 @@ class OperationalObservationRule(
             result.get("confidence", 0.0)
         )
 
+        metadata = {}
+        if "status" in result:
+            metadata["status"] = result["status"]
+        if "action" in result:
+            metadata["action"] = result["action"]
+        if "lifecycle" in result:
+            metadata["lifecycle"] = result["lifecycle"]
+
         return [
             Observation(
                 observation_type=observation_type,
@@ -86,5 +94,8 @@ class OperationalObservationRule(
                 evidence=[
                     communication.source_event_id,
                 ],
+                correlation_id=getattr(communication, "correlation_id", None),
+                occurred_at=getattr(communication, "created_at", None),
+                metadata=metadata,
             )
         ]

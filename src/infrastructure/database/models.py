@@ -678,6 +678,24 @@ class OrganizationEventModel(Base):
         index=True,
     )
 
+    correlation_id: Mapped[str | None] = mapped_column(
+        String(36),
+        nullable=True,
+        index=True,
+    )
+
+    correlation_business_id: Mapped[str | None] = mapped_column(
+        String(1000),
+        nullable=True,
+        index=True,
+    )
+
+    occurred_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

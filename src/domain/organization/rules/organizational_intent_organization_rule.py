@@ -66,6 +66,8 @@ class OrganizationalIntentOrganizationRule(
                     summary=observation.summary,
                     observations=[observation],
                     confidence=observation.confidence,
+                    correlation_id=observation.correlation_id,
+                    occurred_at=observation.occurred_at,
                 )
             )
 

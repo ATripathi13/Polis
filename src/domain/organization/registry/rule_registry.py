@@ -22,16 +22,15 @@ class OrganizationEventRuleRegistry:
         self,
         rule: OrganizationEventRule,
     ) -> None:
-
-        self._rules.append(rule)
+        if rule not in self._rules:
+            self._rules.append(rule)
 
         self._rules.sort(
-            key=lambda r: r.priority,
+            key=lambda r: (r.priority, r.__class__.__name__),
         )
 
     @property
     def rules(
         self,
     ) -> list[OrganizationEventRule]:
-
-        return self._rules
+        return list(self._rules)

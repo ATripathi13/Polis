@@ -46,5 +46,7 @@ class QuestionObservationRule(
                 summary=communication.content.body,
                 confidence=1.0,
                 evidence=[communication.source_event_id],
+                correlation_id=getattr(communication, "correlation_id", None),
+                occurred_at=getattr(communication, "created_at", None),
             )
         ]

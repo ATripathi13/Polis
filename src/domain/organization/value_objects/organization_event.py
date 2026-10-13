@@ -6,6 +6,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from datetime import datetime
+
+from domain.common.identifier import Identifier
 from domain.common.value_object import ValueObject
 
 from domain.organization.enums import (
@@ -20,7 +23,7 @@ from domain.observation import (
 @dataclass(frozen=True, slots=True)
 class OrganizationEvent(ValueObject):
     """
-    Represents a business event
+    Represents a canonical business event
     that occurred inside the organization.
     """
 
@@ -33,6 +36,10 @@ class OrganizationEvent(ValueObject):
     )
 
     confidence: float = 1.0
+
+    correlation_id: Identifier | None = None
+
+    occurred_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if not self.summary.strip():
@@ -48,3 +55,10 @@ class OrganizationEvent(ValueObject):
             "observations",
             list(self.observations),
         )
+
+        if isinstance(self.correlation_id, str):
+            object.__setattr__(
+                self,
+                "correlation_id",
+                Identifier(business_id=self.correlation_id),
+            )

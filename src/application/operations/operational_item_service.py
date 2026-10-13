@@ -27,6 +27,8 @@ class OperationalItemService:
 
     _EVENT_TYPE_MAPPING = {
         OrganizationEventType.TASK_CREATED: OperationalItemType.TASK,
+        OrganizationEventType.TASK_UPDATED: OperationalItemType.TASK,
+        OrganizationEventType.TASK_COMPLETED: OperationalItemType.TASK,
         OrganizationEventType.DECISION_MADE: OperationalItemType.DECISION,
         OrganizationEventType.RISK_IDENTIFIED: OperationalItemType.RISK,
     }
@@ -42,6 +44,7 @@ class OperationalItemService:
         event: OrganizationEvent,
         *,
         source_type: str = "",
+        source_event_id: str = "",
     ) -> OperationalItem | None:
         item_type = self._EVENT_TYPE_MAPPING.get(
             event.event_type
@@ -50,8 +53,7 @@ class OperationalItemService:
         if item_type is None:
             return None
 
-        source_event_id = ""
-        if event.observations:
+        if not source_event_id and event.observations:
             evidence = event.observations[0].evidence
             if evidence:
                 source_event_id = evidence[0]
@@ -63,12 +65,27 @@ class OperationalItemService:
                 item_type,
             )
             if existing is not None:
+                if event.event_type == OrganizationEventType.TASK_COMPLETED:
+                    existing.status = OperationalItemStatus.COMPLETED
+                    existing.touch()
+                    return self._repository.save(existing)
+                if event.event_type == OrganizationEventType.TASK_UPDATED:
+                    existing.status = OperationalItemStatus.IN_PROGRESS
+                    existing.summary = event.summary
+                    existing.touch()
+                    return self._repository.save(existing)
                 return existing
+
+        initial_status = OperationalItemStatus.OPEN
+        if event.event_type == OrganizationEventType.TASK_COMPLETED:
+            initial_status = OperationalItemStatus.COMPLETED
+        elif event.event_type == OrganizationEventType.TASK_UPDATED:
+            initial_status = OperationalItemStatus.IN_PROGRESS
 
         item = OperationalItem.create(
             item_type=item_type,
             summary=event.summary,
-            status=OperationalItemStatus.OPEN,
+            status=initial_status,
             priority=OperationalItemPriority.MEDIUM,
             source_event_id=source_event_id,
             source_type=source_type,

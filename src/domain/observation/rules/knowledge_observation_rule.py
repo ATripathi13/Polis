@@ -74,6 +74,12 @@ class KnowledgeObservationRule(
             )
         )
 
+        is_update = bool(
+            result.get("is_update", False)
+            or result.get("type") == "update"
+            or result.get("lifecycle") == "updated"
+        )
+
         return [
             Observation(
                 observation_type=ObservationType.KNOWLEDGE,
@@ -82,5 +88,12 @@ class KnowledgeObservationRule(
                 evidence=[
                     communication.source_event_id,
                 ],
+                correlation_id=getattr(communication, "correlation_id", None),
+                occurred_at=getattr(communication, "created_at", None),
+                metadata={
+                    "subject": result.get("subject", ""),
+                    "is_update": is_update,
+                    "lifecycle": "updated" if is_update else "discovered",
+                },
             )
         ]

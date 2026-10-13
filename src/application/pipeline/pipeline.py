@@ -1,4 +1,4 @@
-﻿"""
+"""
 POLIS cognitive execution pipeline.
 """
 
@@ -60,32 +60,47 @@ class PolisPipeline:
                 communication,
             )
         )
-        print("OBSERVATIONS:", observations)
 
         organization_events = (
             self._organization_builder.build(
                 observations,
             )
         )
-        print("ORG EVENTS:", organization_events)
+
+        source_type = ""
+        if hasattr(communication, "source") and communication.source is not None:
+            source_type = (
+                communication.source.value
+                if hasattr(communication.source, "value")
+                else str(communication.source)
+            )
+
+        canonical_source_event_id = None
+        if hasattr(communication, "source_event_id") and communication.source_event_id:
+            canonical_source_event_id = str(communication.source_event_id).strip()
+
+        correlation_id = getattr(communication, "correlation_id", None)
 
         if self._organization_event_repository is not None:
             for event in organization_events:
-                source_event_id = next(
-                    (
-                        evidence
-                        for observation in event.observations
-                        for evidence in observation.evidence
-                        if evidence and evidence.strip()
-                    ),
-                    None,
-                )
+                source_event_id = canonical_source_event_id
+                if not source_event_id:
+                    source_event_id = next(
+                        (
+                            evidence
+                            for observation in event.observations
+                            for evidence in observation.evidence
+                            if evidence and evidence.strip()
+                        ),
+                        None,
+                    )
 
-                if source_event_id:
+                if source_event_id and source_type:
                     self._organization_event_repository.save(
                         event,
-                        source_type=communication.source.value,
+                        source_type=source_type,
                         source_event_id=source_event_id,
+                        correlation_id=correlation_id,
                     )
 
         # Step 3
@@ -94,9 +109,21 @@ class PolisPipeline:
         for event in organization_events:
 
             if self._operational_item_service is not None:
+                source_event_id = canonical_source_event_id
+                if not source_event_id:
+                    source_event_id = next(
+                        (
+                            evidence
+                            for observation in event.observations
+                            for evidence in observation.evidence
+                            if evidence and evidence.strip()
+                        ),
+                        "",
+                    )
                 self._operational_item_service.process_event(
                     event,
-                    source_type=communication.source.value,
+                    source_type=source_type,
+                    source_event_id=source_event_id,
                 )
 
             candidates = (
@@ -104,7 +131,6 @@ class PolisPipeline:
                     event,
                 )
             )
-            print("CANDIDATES:", candidates)
             for candidate in candidates:
 
                 result = (

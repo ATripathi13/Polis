@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+from domain.common.identifier import Identifier
 from domain.organization.enums import OrganizationEventType
 from domain.organization.value_objects import OrganizationEvent
 
@@ -23,6 +24,7 @@ class OrganizationEventRepository(ABC):
         *,
         source_type: str,
         source_event_id: str,
+        correlation_id: str | Identifier | None = None,
     ) -> None:
         raise NotImplementedError
 
@@ -34,6 +36,25 @@ class OrganizationEventRepository(ABC):
         event_type: OrganizationEventType,
     ) -> OrganizationEvent | None:
         raise NotImplementedError
+
+    def find_by_source(
+        self,
+        source_type: str,
+        source_event_id: str,
+    ) -> list[OrganizationEvent]:
+        """
+        Find all organizational events originating from a source event.
+        """
+        return []
+
+    def find_by_correlation(
+        self,
+        correlation_id: str | Identifier,
+    ) -> list[OrganizationEvent]:
+        """
+        Find all organizational events for an organizational correlation identity.
+        """
+        return []
 
     @abstractmethod
     def all(

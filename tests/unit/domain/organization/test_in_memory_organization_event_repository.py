@@ -101,3 +101,61 @@ def test_same_source_event_can_produce_different_event_types():
     )
 
     assert len(repository.all()) == 2
+
+
+def test_different_sources_with_same_text_remain_distinct():
+    repository = InMemoryOrganizationEventRepository()
+
+    event1 = make_event(OrganizationEventType.TASK_CREATED, "slack-1")
+    event2 = make_event(OrganizationEventType.TASK_CREATED, "slack-2")
+
+    repository.save(event1, source_type="slack", source_event_id="slack-1")
+    repository.save(event2, source_type="slack", source_event_id="slack-2")
+
+    assert len(repository.all()) == 2
+    assert repository.find_by_source_event("slack", "slack-1", OrganizationEventType.TASK_CREATED) is event1
+    assert repository.find_by_source_event("slack", "slack-2", OrganizationEventType.TASK_CREATED) is event2
+
+
+def test_find_by_source_and_correlation():
+    from domain.common.identifier import Identifier
+
+    repository = InMemoryOrganizationEventRepository()
+
+    corr1 = Identifier(business_id="meeting-100")
+    corr2 = Identifier(business_id="meeting-200")
+
+    task = make_event(OrganizationEventType.TASK_CREATED, "seg-1")
+    decision = make_event(OrganizationEventType.DECISION_MADE, "seg-1")
+    other_task = make_event(OrganizationEventType.TASK_CREATED, "seg-2")
+
+    repository.save(task, source_type="teams", source_event_id="seg-1", correlation_id=corr1)
+    repository.save(decision, source_type="teams", source_event_id="seg-1", correlation_id=corr1)
+    repository.save(other_task, source_type="teams", source_event_id="seg-2", correlation_id=corr2)
+
+    source_events = repository.find_by_source("teams", "seg-1")
+    assert len(source_events) == 2
+    assert {e.event_type for e in source_events} == {
+        OrganizationEventType.TASK_CREATED,
+        OrganizationEventType.DECISION_MADE,
+    }
+
+    corr1_events = repository.find_by_correlation(corr1)
+    assert len(corr1_events) == 2
+
+    corr2_events = repository.find_by_correlation(corr2)
+    assert len(corr2_events) == 1
+    assert corr2_events[0] is other_task
+
+
+def test_repository_validates_required_source_identity():
+    import pytest
+
+    repository = InMemoryOrganizationEventRepository()
+    event = make_event(OrganizationEventType.TASK_CREATED)
+
+    with pytest.raises(ValueError, match="source_type cannot be empty"):
+        repository.save(event, source_type="", source_event_id="123")
+
+    with pytest.raises(ValueError, match="source_event_id cannot be empty"):
+        repository.save(event, source_type="slack", source_event_id="   ")
