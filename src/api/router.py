@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from connectors.slack.api.router import router as slack_router
 from interfaces.api.routes.teams import router as teams_router
 from interfaces.api.routes.meetings import router as meetings_router
+from interfaces.api.routes.ask import router as ask_router
 
 api_router = APIRouter()
 
