@@ -65,3 +65,74 @@ def test_to_domain_uses_observation_timestamp_when_event_timestamp_missing():
 
     assert event.occurred_at == source_timestamp
     assert event.observations[0].occurred_at == source_timestamp
+
+
+def test_save_serializes_event_and_observation_timestamps(monkeypatch):
+    from domain.observation import Observation, ObservationType
+    from domain.organization import OrganizationEvent, OrganizationEventType
+    from infrastructure.database import organization_event_repository as repository_module
+
+    source_timestamp = datetime(
+        2024, 4, 5, 19, 34, 38, 123456, tzinfo=timezone.utc
+    )
+
+    observation = Observation(
+        observation_type=ObservationType.TASK,
+        summary="Prepare deployment report",
+        confidence=0.9,
+        evidence=["slack-event-3"],
+        occurred_at=source_timestamp,
+    )
+    event = OrganizationEvent(
+        event_type=OrganizationEventType.TASK_CREATED,
+        summary="Prepare deployment report",
+        observations=[observation],
+        confidence=0.9,
+        occurred_at=source_timestamp,
+    )
+
+    class FakeQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            return None
+
+    class FakeSession:
+        def __init__(self):
+            self.added = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def query(self, *args, **kwargs):
+            return FakeQuery()
+
+        def add(self, record):
+            self.added = record
+
+        def commit(self):
+            pass
+
+    fake_session = FakeSession()
+    monkeypatch.setattr(
+        repository_module,
+        "SessionLocal",
+        lambda: fake_session,
+    )
+
+    PostgreSQLOrganizationEventRepository().save(
+        event,
+        source_type="slack",
+        source_event_id="slack-event-3",
+    )
+
+    assert fake_session.added is not None
+    assert fake_session.added.occurred_at == source_timestamp
+    assert (
+        fake_session.added.observations[0]["occurred_at"]
+        == source_timestamp.isoformat()
+    )
