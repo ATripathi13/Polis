@@ -366,3 +366,11 @@ def test_end_to_end_pipeline_provenance_correlation_and_lifecycle():
     assert op_item.status == OperationalItemStatus.COMPLETED
     assert op_item.source_type == "microsoft_teams"
     assert op_item.source_event_id == "teams-msg-999"
+
+    # Replaying the same communication must not duplicate persisted records.
+    pipeline.process(comm)
+
+    assert len(event_repo.all()) == 1
+    assert len(event_repo.find_by_correlation(corr_id)) == 1
+    assert len(op_repo.items) == 1
+    assert op_repo.items[0].status == OperationalItemStatus.COMPLETED
