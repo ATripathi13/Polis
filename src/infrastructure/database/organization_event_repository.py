@@ -88,6 +88,16 @@ class PostgreSQLOrganizationEventRepository(
                         if observation.correlation_id
                         else corr_business_id
                     ),
+                    "correlation_graph_id": (
+                        str(observation.correlation_id.graph_id)
+                        if observation.correlation_id
+                        else None
+                    ),
+                    "correlation_business_id": (
+                        observation.correlation_id.business_id or None
+                        if observation.correlation_id
+                        else corr_business_id
+                    ),
                     "occurred_at": (
                         (observation.occurred_at or event.occurred_at).isoformat()
                         if (observation.occurred_at or event.occurred_at)
@@ -243,12 +253,26 @@ class PostgreSQLOrganizationEventRepository(
 
         for item in (record.observations or []):
             corr = None
-            if item.get("correlation_id"):
+            graph_id = item.get("correlation_graph_id")
+            business_id = item.get("correlation_business_id")
+            legacy_correlation_id = item.get("correlation_id")
+
+            if graph_id or business_id:
                 corr = Identifier(
-                    business_id=item["correlation_id"]
+                    graph_id=UUID(graph_id) if graph_id else uuid5(
+                        NAMESPACE_URL,
+                        f"polis:observation-correlation:{business_id}",
+                    ),
+                    business_id=business_id or "",
                 )
-                if event_corr is None:
-                    event_corr = corr
+            elif legacy_correlation_id:
+                try:
+                    corr = Identifier(graph_id=UUID(legacy_correlation_id))
+                except (TypeError, ValueError):
+                    corr = Identifier(business_id=legacy_correlation_id)
+
+            if corr is not None and event_corr is None:
+                event_corr = corr
 
             occurred = None
             if item.get("occurred_at"):

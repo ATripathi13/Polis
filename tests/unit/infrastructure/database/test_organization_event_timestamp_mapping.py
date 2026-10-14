@@ -310,3 +310,126 @@ def test_find_by_correlation_accepts_plain_string(monkeypatch):
     assert len(events) == 1
     assert events[0].summary == "Business-linked event"
     assert len(query.filters) == 1
+
+
+def test_save_preserves_observation_correlation_identity(monkeypatch):
+    from uuid import uuid4
+
+    from domain.common.identifier import Identifier
+    from domain.observation import Observation, ObservationType
+    from domain.organization import OrganizationEvent, OrganizationEventType
+    from infrastructure.database import organization_event_repository as repository_module
+
+    correlation = Identifier(graph_id=uuid4())
+    observation = Observation(
+        observation_type=ObservationType.TASK,
+        summary="Prepare deployment report",
+        correlation_id=correlation,
+    )
+    event = OrganizationEvent(
+        event_type=OrganizationEventType.TASK_CREATED,
+        summary="Prepare deployment report",
+        observations=[observation],
+    )
+
+    class FakeQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            return None
+
+    class FakeSession:
+        def __init__(self):
+            self.added = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def query(self, *args, **kwargs):
+            return FakeQuery()
+
+        def add(self, record):
+            self.added = record
+
+        def commit(self):
+            pass
+
+    fake_session = FakeSession()
+    monkeypatch.setattr(
+        repository_module,
+        "SessionLocal",
+        lambda: fake_session,
+    )
+
+    PostgreSQLOrganizationEventRepository().save(
+        event,
+        source_type="slack",
+        source_event_id="correlation-identity-test",
+    )
+
+    saved_observation = fake_session.added.observations[0]
+    assert saved_observation["correlation_id"] == str(correlation.graph_id)
+    assert saved_observation["correlation_graph_id"] == str(correlation.graph_id)
+    assert saved_observation["correlation_business_id"] is None
+
+    record = SimpleNamespace(
+        event_type=event.event_type.value,
+        summary=event.summary,
+        observations=fake_session.added.observations,
+        confidence=event.confidence,
+        correlation_id=None,
+        correlation_business_id=None,
+        occurred_at=None,
+    )
+    restored = PostgreSQLOrganizationEventRepository._to_domain(record)
+    restored_correlation = restored.observations[0].correlation_id
+
+    assert restored_correlation is not None
+    assert restored_correlation.graph_id == correlation.graph_id
+    assert restored_correlation.business_id == ""
+
+
+def test_to_domain_restores_legacy_observation_correlation_id():
+    from uuid import UUID
+
+    graph_id = "00000000-0000-4000-8000-000000000011"
+    record = SimpleNamespace(
+        id="00000000-0000-4000-8000-000000000012",
+        event_type="task_created",
+        summary="Legacy graph correlation",
+        observations=[
+            {
+                "observation_type": "task",
+                "summary": "Legacy graph correlation",
+                "confidence": 0.9,
+                "evidence": [],
+                "correlation_id": graph_id,
+            },
+            {
+                "observation_type": "task",
+                "summary": "Legacy business correlation",
+                "confidence": 0.9,
+                "evidence": [],
+                "correlation_id": "legacy-business-123",
+            },
+        ],
+        confidence=0.9,
+        correlation_id=None,
+        correlation_business_id=None,
+        occurred_at=None,
+    )
+
+    event = PostgreSQLOrganizationEventRepository._to_domain(record)
+
+    graph_correlation = event.observations[0].correlation_id
+    business_correlation = event.observations[1].correlation_id
+
+    assert graph_correlation is not None
+    assert graph_correlation.graph_id == UUID(graph_id)
+    assert graph_correlation.business_id == ""
+    assert business_correlation is not None
+    assert business_correlation.business_id == "legacy-business-123"
