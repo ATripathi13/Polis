@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from application.pipeline.pipeline import PolisPipeline
 
 from domain.knowledge import (
@@ -97,6 +99,7 @@ def test_polis_pipeline():
         ),
         content=Content(
             body="We use PostgreSQL.",
+            metadata={"source_timestamp": "1712345678.123456"},
         ),
     )
 
@@ -190,3 +193,12 @@ def test_polis_pipeline():
 
     assert persisted_event is not None
     assert persisted_event.summary == 'We use PostgreSQL.'
+    expected_timestamp = datetime.fromtimestamp(
+        1712345678.123456,
+        tz=timezone.utc,
+    )
+    assert persisted_event.occurred_at == expected_timestamp
+    assert (
+        persisted_event.observations[0].occurred_at
+        == expected_timestamp
+    )
