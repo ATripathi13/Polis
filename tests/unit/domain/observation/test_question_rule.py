@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from domain.observation import (
     ObservationType,
 )
@@ -21,6 +23,7 @@ def test_extract_question_observation():
 
     event.content = Content(
         body="What database do we use?",
+        metadata={"source_timestamp": "1712345678.123456"},
     )
 
     rule = QuestionObservationRule()
@@ -37,6 +40,10 @@ def test_extract_question_observation():
     assert observations[0].evidence == [
         "1712345678.123456"
     ]
+    assert observations[0].occurred_at == datetime.fromtimestamp(
+        1712345678.123456,
+        tz=timezone.utc,
+    )
 
 
 def test_ignore_non_question():

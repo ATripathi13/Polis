@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from domain.observation import (
     Observation,
     ObservationType,
@@ -16,6 +18,10 @@ def test_build_question_event():
         summary="What database do we use?",
         confidence=0.9,
         evidence=["slack-event-1"],
+        occurred_at=datetime.fromtimestamp(
+            1712345678.123456,
+            tz=timezone.utc,
+        ),
     )
 
     rule = QuestionOrganizationRule()
@@ -47,3 +53,5 @@ def test_build_question_event():
         events[0].observations[0].evidence
         == ["slack-event-1"]
     )
+    assert events[0].occurred_at == observation.occurred_at
+    assert events[0].observations[0].occurred_at == observation.occurred_at
