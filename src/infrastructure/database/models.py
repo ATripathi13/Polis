@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, String, Text
+from sqlalchemy import Boolean, DateTime, Float, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -700,3 +700,62 @@ class OrganizationEventModel(Base):
         DateTime(timezone=True),
         nullable=False,
     )
+
+class GovernancePolicyModel(Base):
+    __tablename__ = "governance_policies"
+
+    policy_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    scope: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(String(50), nullable=False)
+    enforcement_mode: Mapped[str] = mapped_column(String(50), nullable=False)
+    authority: Mapped[str] = mapped_column(String(255), nullable=False)
+    requires_approval: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    rule_description: Mapped[str] = mapped_column(Text, nullable=False)
+    condition_keywords: Mapped[list] = mapped_column(JSONB, nullable=False)
+    effective_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False)
+
+
+class GovernanceApprovalModel(Base):
+    __tablename__ = "governance_approval_requests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    target_object: Mapped[str] = mapped_column(Text, nullable=False)
+    requester_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    policy_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    approver_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_event_id: Mapped[str] = mapped_column(String(255), nullable=False, default="", index=True)
+    source_type: Mapped[str] = mapped_column(String(100), nullable=False, default="", index=True)
+    correlation_id: Mapped[str | None] = mapped_column(String(1000), nullable=True, index=True)
+    evidence: Mapped[list] = mapped_column(JSONB, nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False)
+
+
+class GovernanceFindingModel(Base):
+    __tablename__ = "governance_findings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    policy_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    policy_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    severity: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    compliance_status: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    affected_object: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence: Mapped[list] = mapped_column(JSONB, nullable=False)
+    source_event_id: Mapped[str] = mapped_column(String(255), nullable=False, default="", index=True)
+    source_type: Mapped[str] = mapped_column(String(100), nullable=False, default="", index=True)
+    correlation_id: Mapped[str | None] = mapped_column(String(1000), nullable=True, index=True)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    authority: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    remediation_required: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False)

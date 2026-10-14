@@ -72,3 +72,13 @@ def get_operations_agent():
     container = get_container()
 
     return container.operations_agent
+
+
+def get_governance_agent():
+    """
+    Return the specialist Governance Agent.
+    """
+
+    container = get_container()
+
+    return container.governance_agent

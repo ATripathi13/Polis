@@ -48,3 +48,13 @@ class OperationsResultResponse(BaseModel):
     question: str
     evidence: list[str] = Field(default_factory=list)
     summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class GovernanceResultResponse(BaseModel):
+    """
+    Detailed Governance Agent intelligence response.
+    """
+
+    question: str
+    evidence: list[str] = Field(default_factory=list)
+    governance_state: dict[str, Any] = Field(default_factory=dict)

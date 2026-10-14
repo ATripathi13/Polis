@@ -1,5 +1,5 @@
 """
-Question answering and knowledge intelligence API.
+Question answering, knowledge, operations, and governance intelligence API.
 """
 
 from __future__ import annotations
@@ -24,12 +24,14 @@ from interfaces.api.dependencies import (
     get_cognitive_engine,
     get_knowledge_agent,
     get_operations_agent,
+    get_governance_agent,
 )
 from interfaces.api.models import (
     QuestionRequest,
     AnswerResponse,
     KnowledgeResultResponse,
     OperationsResultResponse,
+    GovernanceResultResponse,
 )
 
 router = APIRouter(
@@ -163,4 +165,37 @@ def ask_operations(
         question=result.get("question", request.question),
         evidence=result.get("evidence", []),
         summary=result.get("summary", {}),
+    )
+
+
+@router.post(
+    "/governance",
+    response_model=GovernanceResultResponse,
+)
+def ask_governance(
+    request: QuestionRequest,
+    governance_agent=Depends(
+        get_governance_agent,
+    ),
+):
+    """
+    Direct Governance Agent specialist intelligence endpoint.
+    Returns governance state, active violations, pending approvals, and policies.
+    """
+    if governance_agent is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Governance Agent specialist is not configured.",
+        )
+
+    question = Question(
+        text=request.question,
+        target_user_id=request.employee_slack_user_id,
+    )
+    result = governance_agent.ask(question)
+
+    return GovernanceResultResponse(
+        question=result.get("question", request.question),
+        evidence=result.get("evidence", []),
+        governance_state=result.get("governance_state", {}),
     )

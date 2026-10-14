@@ -55,6 +55,10 @@ from application.operations import (
     OperationsAgent,
 )
 
+from application.governance import (
+    GovernanceAgent,
+)
+
 
 @dataclass(slots=True)
 class ApplicationContainer:
@@ -93,4 +97,5 @@ class ApplicationContainer:
 
     knowledge_agent: KnowledgeAgent | None = None
     operations_agent: OperationsAgent | None = None
+    governance_agent: GovernanceAgent | None = None
 

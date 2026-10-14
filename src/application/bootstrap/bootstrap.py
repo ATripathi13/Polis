@@ -48,6 +48,9 @@ from application.operations import (
 from application.knowledge import (
     KnowledgeAgent,
 )
+from application.governance import (
+    GovernanceAgent,
+)
 
 from domain.knowledge import (
     KnowledgeDiscoveryRule,
@@ -69,6 +72,7 @@ from infrastructure.database import (
     PostgreSQLActivityRepository,
     PostgreSQLOperationalItemRepository,
     PostgreSQLOrganizationEventRepository,
+    PostgreSQLGovernanceRepository,
 )
 
 from engines.communication.infrastructure.repositories import (
@@ -400,6 +404,15 @@ def bootstrap(
         reminder_service=reminder_service,
     )
 
+    governance_repository = PostgreSQLGovernanceRepository()
+    governance_agent = GovernanceAgent(
+        repository=governance_repository,
+        operations_agent=operations_agent,
+        knowledge_agent=knowledge_agent,
+        organization_event_repository=organization_event_repository,
+        enabled=settings.enable_governance_engine,
+    )
+
     pipeline = PolisPipeline(
         communication_service=None,
         observation_extractor=observation_extractor,
@@ -412,6 +425,7 @@ def bootstrap(
         organization_event_repository=organization_event_repository,
         knowledge_agent=knowledge_agent,
         operations_agent=operations_agent,
+        governance_agent=governance_agent,
     )
 
     engine = SimpleCognitiveEngine(
@@ -423,6 +437,7 @@ def bootstrap(
         knowledge_base_answer_service=knowledge_base_answer,
         knowledge_agent=knowledge_agent,
         operations_agent=operations_agent,
+        governance_agent=governance_agent,
     )
     return ApplicationContainer(
         engine=engine,
@@ -444,6 +459,7 @@ def bootstrap(
         knowledge_base_ingestion_service=knowledge_base_ingestion,
         knowledge_agent=knowledge_agent,
         operations_agent=operations_agent,
+        governance_agent=governance_agent,
     )
 
 

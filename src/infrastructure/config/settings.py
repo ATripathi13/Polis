@@ -151,6 +151,15 @@ class Settings(BaseSettings):
         alias="KNOWLEDGE_BASE_EMBEDDING_MODEL",
     )
 
+    # ==========================================================
+    # Governance Engine
+    # ==========================================================
+
+    enable_governance_engine: bool = Field(
+        default=True,
+        alias="ENABLE_GOVERNANCE_ENGINE",
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

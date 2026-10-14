@@ -22,6 +22,7 @@ class PolisPipeline:
         organization_event_repository=None,
         knowledge_agent=None,
         operations_agent=None,
+        governance_agent=None,
     ):
 
         self._communication_service = communication_service
@@ -52,6 +53,11 @@ class PolisPipeline:
         )
         self._knowledge_agent = knowledge_agent
         self._operations_agent = operations_agent
+        self._governance_agent = governance_agent
+
+    @property
+    def governance_agent(self):
+        return self._governance_agent
 
     @property
     def operations_agent(self):
@@ -146,6 +152,15 @@ class PolisPipeline:
                     event,
                     source_type=source_type,
                     source_event_id=source_event_id,
+                )
+
+            # Governance specialist processing
+            if self._governance_agent is not None:
+                self._governance_agent.process_event(
+                    event,
+                    source_type=source_type,
+                    source_event_id=source_event_id,
+                    correlation_id=correlation_id,
                 )
 
             if self._knowledge_agent is not None:

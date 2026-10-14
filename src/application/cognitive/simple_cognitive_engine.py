@@ -37,6 +37,7 @@ class SimpleCognitiveEngine(
         knowledge_base_answer_service=None,
         knowledge_agent=None,
         operations_agent=None,
+        governance_agent=None,
     ) -> None:
 
         self._pipeline = pipeline
@@ -63,6 +64,7 @@ class SimpleCognitiveEngine(
 
         self._knowledge_agent = knowledge_agent
         self._operations_agent = operations_agent
+        self._governance_agent = governance_agent
 
     @property
     def knowledge_agent(self):
@@ -71,6 +73,10 @@ class SimpleCognitiveEngine(
     @property
     def operations_agent(self):
         return self._operations_agent
+
+    @property
+    def governance_agent(self):
+        return self._governance_agent
 
     def learn(
         self,
@@ -210,10 +216,20 @@ class SimpleCognitiveEngine(
                         )
                     )
 
+            governance_evidence: list[str] = []
+
+            if self._governance_agent is not None:
+                governance_evidence = (
+                    self._governance_agent.retrieve_evidence(
+                        question,
+                    )
+                )
+
             unified_evidence = (
                 organizational_evidence
                 + operational_evidence
                 + knowledge_base_evidence
+                + governance_evidence
             )
 
             if unified_evidence:
@@ -254,4 +270,15 @@ class SimpleCognitiveEngine(
         """
         if self._operations_agent is not None:
             return self._operations_agent.ask(question)
+        return None
+
+    def ask_governance(
+        self,
+        question: Question | str,
+    ):
+        """
+        Ask the specialist Governance Agent directly.
+        """
+        if self._governance_agent is not None:
+            return self._governance_agent.ask(question)
         return None
