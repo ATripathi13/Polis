@@ -46,3 +46,7 @@ def test_normalize_slack_event():
     assert communication.channel.name == "general"
 
     assert communication.content.body == "Hello Polis!"
+    assert (
+        communication.content.metadata["source_timestamp"]
+        == "1712345678.123456"
+    )

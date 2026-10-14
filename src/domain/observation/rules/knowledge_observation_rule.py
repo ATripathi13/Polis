@@ -4,6 +4,8 @@ Extracts knowledge observations from communications.
 
 from __future__ import annotations
 
+from domain.observation.rules.timestamp_utils import resolve_occurred_at
+
 from engines.communication.domain.aggregates import (
     CommunicationEvent,
 )
@@ -89,7 +91,7 @@ class KnowledgeObservationRule(
                     communication.source_event_id,
                 ],
                 correlation_id=getattr(communication, "correlation_id", None),
-                occurred_at=getattr(communication, "created_at", None),
+                occurred_at=resolve_occurred_at(communication),
                 metadata={
                     "subject": result.get("subject", ""),
                     "is_update": is_update,

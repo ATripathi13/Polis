@@ -4,6 +4,8 @@ Extracts question observations.
 
 from __future__ import annotations
 
+from domain.observation.rules.timestamp_utils import resolve_occurred_at
+
 from domain.observation.enums import (
     ObservationType,
 )
@@ -47,6 +49,6 @@ class QuestionObservationRule(
                 confidence=1.0,
                 evidence=[communication.source_event_id],
                 correlation_id=getattr(communication, "correlation_id", None),
-                occurred_at=getattr(communication, "created_at", None),
+                occurred_at=resolve_occurred_at(communication),
             )
         ]

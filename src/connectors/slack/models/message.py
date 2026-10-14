@@ -22,4 +22,5 @@ class SlackMessage:
 
         return Content(
             body=self.text,
+            metadata={"source_timestamp": self.ts},
         )
