@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from sqlalchemy import and_
+from sqlalchemy.exc import IntegrityError
 
 from domain.common.identifier import Identifier
 
@@ -122,7 +123,24 @@ class PostgreSQLOrganizationEventRepository(
             )
 
             session.add(record)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError as exc:
+                original = exc.orig
+                constraint_name = getattr(
+                    getattr(original, "diag", None),
+                    "constraint_name",
+                    None,
+                )
+                if (
+                    constraint_name
+                    != "uq_organization_events_source_event_type"
+                ):
+                    session.rollback()
+                    raise
+
+                session.rollback()
+                return
 
     def find_by_source_event(
         self,

@@ -433,3 +433,129 @@ def test_to_domain_restores_legacy_observation_correlation_id():
     assert graph_correlation.business_id == ""
     assert business_correlation is not None
     assert business_correlation.business_id == "legacy-business-123"
+
+
+def test_save_ignores_concurrent_duplicate_event_conflict(monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+    from domain.organization import OrganizationEvent, OrganizationEventType
+    from infrastructure.database import organization_event_repository as repository_module
+
+    event = OrganizationEvent(
+        event_type=OrganizationEventType.TASK_CREATED,
+        summary="Prepare deployment report",
+        observations=[],
+        confidence=0.9,
+    )
+
+    original_error = SimpleNamespace(
+        diag=SimpleNamespace(
+            constraint_name="uq_organization_events_source_event_type"
+        )
+    )
+    duplicate_error = IntegrityError(
+        "duplicate organization event",
+        {},
+        original_error,
+    )
+
+    class FakeQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            return None
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def query(self, *args, **kwargs):
+            return FakeQuery()
+
+        def add(self, record):
+            pass
+
+        def commit(self):
+            raise duplicate_error
+
+        def rollback(self):
+            pass
+
+    monkeypatch.setattr(
+        repository_module,
+        "SessionLocal",
+        lambda: FakeSession(),
+    )
+
+    PostgreSQLOrganizationEventRepository().save(
+        event,
+        source_type="slack",
+        source_event_id="concurrent-duplicate-event",
+    )
+
+def test_save_reraises_unrelated_integrity_error(monkeypatch):
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+    from domain.organization import OrganizationEvent, OrganizationEventType
+    from infrastructure.database import organization_event_repository as repository_module
+
+    event = OrganizationEvent(
+        event_type=OrganizationEventType.TASK_CREATED,
+        summary="Prepare deployment report",
+        observations=[],
+        confidence=0.9,
+    )
+
+    original_error = SimpleNamespace(
+        diag=SimpleNamespace(constraint_name="some_other_constraint")
+    )
+    integrity_error = IntegrityError("unrelated constraint", {}, original_error)
+
+    class FakeQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            return None
+
+    class FakeSession:
+        def __init__(self):
+            self.rollback_called = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def query(self, *args, **kwargs):
+            return FakeQuery()
+
+        def add(self, record):
+            pass
+
+        def commit(self):
+            raise integrity_error
+
+        def rollback(self):
+            self.rollback_called = True
+
+    fake_session = FakeSession()
+    monkeypatch.setattr(
+        repository_module,
+        "SessionLocal",
+        lambda: fake_session,
+    )
+
+    with pytest.raises(IntegrityError) as raised:
+        PostgreSQLOrganizationEventRepository().save(
+            event,
+            source_type="slack",
+            source_event_id="unrelated-integrity-error",
+        )
+
+    assert raised.value is integrity_error
+    assert fake_session.rollback_called
