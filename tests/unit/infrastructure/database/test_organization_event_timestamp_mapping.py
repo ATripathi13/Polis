@@ -136,3 +136,177 @@ def test_save_serializes_event_and_observation_timestamps(monkeypatch):
         fake_session.added.observations[0]["occurred_at"]
         == source_timestamp.isoformat()
     )
+
+
+def test_find_by_correlation_queries_business_id(monkeypatch):
+    from domain.common.identifier import Identifier
+    from infrastructure.database import organization_event_repository as repository_module
+    from infrastructure.database.models import OrganizationEventModel
+
+    correlation = Identifier(business_id="meeting-100")
+    record = SimpleNamespace(
+        id="00000000-0000-4000-8000-000000000010",
+        event_type="task_created",
+        summary="Prepare deployment report",
+        observations=[],
+        confidence=0.9,
+        correlation_id=str(correlation.graph_id),
+        correlation_business_id="meeting-100",
+        occurred_at=None,
+        created_at=datetime(2024, 4, 5, tzinfo=timezone.utc),
+    )
+
+    class FakeQuery:
+        def __init__(self):
+            self.filters = []
+            self.ordered_by = None
+
+        def filter(self, *criteria):
+            self.filters.extend(criteria)
+            return self
+
+        def order_by(self, expression):
+            self.ordered_by = expression
+            return self
+
+        def all(self):
+            return [record]
+
+    class FakeSession:
+        def __init__(self):
+            self.query_instance = FakeQuery()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def query(self, model):
+            assert model is OrganizationEventModel
+            return self.query_instance
+
+    fake_session = FakeSession()
+    monkeypatch.setattr(
+        repository_module,
+        "SessionLocal",
+        lambda: fake_session,
+    )
+
+    events = PostgreSQLOrganizationEventRepository().find_by_correlation(
+        correlation
+    )
+
+    assert len(events) == 1
+    assert events[0].summary == "Prepare deployment report"
+    assert len(fake_session.query_instance.filters) == 1
+
+
+def test_find_by_correlation_falls_back_to_graph_id(monkeypatch):
+    from uuid import uuid4
+
+    from domain.common.identifier import Identifier
+    from infrastructure.database import organization_event_repository as repository_module
+    from infrastructure.database.models import OrganizationEventModel
+
+    correlation = Identifier(graph_id=uuid4())
+    record = SimpleNamespace(
+        id="00000000-0000-4000-8000-000000000011",
+        event_type="task_created",
+        summary="Graph-linked event",
+        observations=[],
+        confidence=0.9,
+        correlation_id=str(correlation.graph_id),
+        correlation_business_id=None,
+        occurred_at=None,
+        created_at=datetime(2024, 4, 5, tzinfo=timezone.utc),
+    )
+
+    class FakeQuery:
+        def __init__(self):
+            self.filters = []
+
+        def filter(self, *criteria):
+            self.filters.extend(criteria)
+            return self
+
+        def order_by(self, expression):
+            return self
+
+        def all(self):
+            return [record]
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def query(self, model):
+            assert model is OrganizationEventModel
+            return query
+
+    query = FakeQuery()
+    monkeypatch.setattr(repository_module, "SessionLocal", FakeSession)
+
+    events = PostgreSQLOrganizationEventRepository().find_by_correlation(
+        correlation
+    )
+
+    assert len(events) == 1
+    assert events[0].summary == "Graph-linked event"
+    assert len(query.filters) == 1
+
+
+def test_find_by_correlation_accepts_plain_string(monkeypatch):
+    from infrastructure.database import organization_event_repository as repository_module
+    from infrastructure.database.models import OrganizationEventModel
+
+    record = SimpleNamespace(
+        id="00000000-0000-4000-8000-000000000012",
+        event_type="task_created",
+        summary="Business-linked event",
+        observations=[],
+        confidence=0.9,
+        correlation_id=None,
+        correlation_business_id="meeting-plain-string",
+        occurred_at=None,
+        created_at=datetime(2024, 4, 5, tzinfo=timezone.utc),
+    )
+
+    class FakeQuery:
+        def __init__(self):
+            self.filters = []
+
+        def filter(self, *criteria):
+            self.filters.extend(criteria)
+            return self
+
+        def order_by(self, expression):
+            return self
+
+        def all(self):
+            return [record]
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def query(self, model):
+            assert model is OrganizationEventModel
+            return query
+
+    query = FakeQuery()
+    monkeypatch.setattr(repository_module, "SessionLocal", FakeSession)
+
+    events = PostgreSQLOrganizationEventRepository().find_by_correlation(
+        "meeting-plain-string"
+    )
+
+    assert len(events) == 1
+    assert events[0].summary == "Business-linked event"
+    assert len(query.filters) == 1

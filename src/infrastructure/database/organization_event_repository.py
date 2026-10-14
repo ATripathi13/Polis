@@ -172,6 +172,36 @@ class PostgreSQLOrganizationEventRepository(
                 for record in records
             ]
 
+    def find_by_correlation(
+        self,
+        correlation_id: str | Identifier,
+    ) -> list[OrganizationEvent]:
+        if isinstance(correlation_id, Identifier):
+            if correlation_id.business_id:
+                criterion = (
+                    OrganizationEventModel.correlation_business_id
+                    == correlation_id.business_id
+                )
+            else:
+                criterion = (
+                    OrganizationEventModel.correlation_id
+                    == str(correlation_id.graph_id)
+                )
+        else:
+            criterion = (
+                (OrganizationEventModel.correlation_business_id == correlation_id)
+                | (OrganizationEventModel.correlation_id == correlation_id)
+            )
+
+        with SessionLocal() as session:
+            records = (
+                session.query(OrganizationEventModel)
+                .filter(criterion)
+                .order_by(OrganizationEventModel.created_at.asc())
+                .all()
+            )
+            return [self._to_domain(record) for record in records]
+
     def all(self) -> list[OrganizationEvent]:
 
         with SessionLocal() as session:
