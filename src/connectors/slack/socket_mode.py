@@ -96,6 +96,10 @@ class SlackSocketMode:
             mention_token = f"<@{bot_user_id}>"
 
             is_polis_question = mention_token in text
+            is_direct_message = (
+                event.get("channel_type") == "im"
+                or channel_id.startswith("D")
+            )
 
             # ======================================================
             # Always ingest the message first.
@@ -141,17 +145,25 @@ class SlackSocketMode:
             # Do not reply.
             # ======================================================
 
-            if not is_polis_question:
-                return
-
-            # ======================================================
-            # Remove the POLIS mention from the question.
-            # ======================================================
-
+            # Direct-message recipients can stop reminders without
+            # needing Slack's special mention syntax.
             question_text = text.replace(
                 mention_token,
                 "",
             ).strip()
+
+            if is_direct_message:
+                question_text = re.sub(
+                    r"^@polis\s+",
+                    "",
+                    question_text,
+                    flags=re.IGNORECASE,
+                ).strip()
+
+            if not is_polis_question and not (
+                is_direct_message and question_text.lower() == "stop"
+            ):
+                return
 
             # ======================================================
             # Stop all active reminders for the requesting user.
@@ -309,7 +321,10 @@ class SlackSocketMode:
 
                         self._slack_client.post_message(
                             channel=dm_channel,
-                            text=f"Reminder: {reminder.task}",
+                            text=(
+                                f"Reminder: {reminder.task}\n"
+                                "Reply `@POLIS stop` to stop future reminders."
+                            ),
                         )
 
                         sent_at = datetime.now(timezone.utc)
