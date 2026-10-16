@@ -294,3 +294,10 @@ def test_handle_question_asked_event():
     assert result is not None
     assert result.status == KnowledgeStatus.KNOWN
     assert "eu-west-1" in result.evidence[0]
+
+
+
+def test_domain_knowledge_lookup_without_repository_returns_empty():
+    agent = KnowledgeAgent(knowledge_repository=None)
+
+    assert agent._find_matching_domain_knowledge("database") == []

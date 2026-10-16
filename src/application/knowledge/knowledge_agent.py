@@ -66,9 +66,12 @@ class KnowledgeAgent:
         Evaluates evidence, checks for contradictions and knowledge gaps,
         and returns a structured KnowledgeResult.
         """
-        question_text = (
-            question.text if isinstance(question, Question) else str(question)
-        ).strip()
+        if question is None:
+            question_text = ""
+        elif isinstance(question, Question):
+            question_text = (question.text or "").strip()
+        else:
+            question_text = str(question).strip()
 
         if not question_text:
             return KnowledgeResult(
@@ -207,9 +210,12 @@ class KnowledgeAgent:
         """
         Retrieve formatted knowledge evidence strings for POLIS unified answering.
         """
-        question_text = (
-            question.text if isinstance(question, Question) else str(question)
-        ).strip()
+        if question is None:
+            question_text = ""
+        elif isinstance(question, Question):
+            question_text = (question.text or "").strip()
+        else:
+            question_text = str(question).strip()
 
         if not question_text:
             return []
@@ -296,6 +302,12 @@ class KnowledgeAgent:
                     ],
                     knowledge_changes=[],
                 )
+            return self._handle_knowledge_updated(
+                event,
+                source_type=source_type,
+                source_event_id=source_event_id,
+                persist=persist,
+            )
 
         candidate = KnowledgeCandidate(
             subject=KnowledgeSubject(
@@ -555,6 +567,9 @@ class KnowledgeAgent:
         """
         Find matching candidates from the structured knowledge repository.
         """
+        if self._knowledge_repository is None:
+            return []
+
         try:
             all_records = self._knowledge_repository.all()
         except Exception as e:
@@ -603,9 +618,11 @@ class KnowledgeAgent:
             for j in range(i + 1, len(texts)):
                 lower2 = texts[j].lower()
 
-                # Rule 1: Negation conflict (e.g. "is required" vs "is not required")
+                # Rule 1: Negation conflict (e.g. "is/are required" vs "not required")
                 for key_term in ["required", "mandatory", "deprecated", "enabled", "disabled", "allowed", "prohibited"]:
-                    if f"is {key_term}" in lower1 and f"not {key_term}" in lower2:
+                    has_affirmative1 = f"is {key_term}" in lower1 or f"are {key_term}" in lower1
+                    has_affirmative2 = f"is {key_term}" in lower2 or f"are {key_term}" in lower2
+                    if has_affirmative1 and f"not {key_term}" in lower2:
                         return KnowledgeContradiction(
                             existing_knowledge=text1,
                             new_knowledge=texts[j],
@@ -613,7 +630,7 @@ class KnowledgeAgent:
                             supporting_evidence=[text1, texts[j]],
                             recommended_resolution="escalate",
                         )
-                    if f"is {key_term}" in lower2 and f"not {key_term}" in lower1:
+                    if has_affirmative2 and f"not {key_term}" in lower1:
                         return KnowledgeContradiction(
                             existing_knowledge=texts[j],
                             new_knowledge=text1,
@@ -730,6 +747,9 @@ class KnowledgeAgent:
         """
         Return stored authoritative knowledge records.
         """
+        if self._knowledge_repository is None:
+            return []
+
         try:
             records = self._knowledge_repository.all()
         except Exception as e:
