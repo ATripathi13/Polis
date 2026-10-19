@@ -466,6 +466,9 @@ def test_save_ignores_concurrent_duplicate_event_conflict(monkeypatch):
             return None
 
     class FakeSession:
+        def __init__(self):
+            self.rollback_called = False
+
         def __enter__(self):
             return self
 
@@ -482,12 +485,13 @@ def test_save_ignores_concurrent_duplicate_event_conflict(monkeypatch):
             raise duplicate_error
 
         def rollback(self):
-            pass
+            self.rollback_called = True
 
+    fake_session = FakeSession()
     monkeypatch.setattr(
         repository_module,
         "SessionLocal",
-        lambda: FakeSession(),
+        lambda: fake_session,
     )
 
     PostgreSQLOrganizationEventRepository().save(
@@ -495,6 +499,147 @@ def test_save_ignores_concurrent_duplicate_event_conflict(monkeypatch):
         source_type="slack",
         source_event_id="concurrent-duplicate-event",
     )
+    assert fake_session.rollback_called
+
+
+def test_save_ignores_concurrent_duplicate_with_driver_message_no_diag(monkeypatch):
+    """
+    Drivers without structured diagnostics (e.g. psycopg3, asyncpg, or stripped DBAPI errors)
+    provide the constraint violation in the driver error message string.
+    """
+    from sqlalchemy.exc import IntegrityError
+    from domain.organization import OrganizationEvent, OrganizationEventType
+    from infrastructure.database import organization_event_repository as repository_module
+
+    event = OrganizationEvent(
+        event_type=OrganizationEventType.TASK_CREATED,
+        summary="Prepare deployment report",
+        observations=[],
+        confidence=0.9,
+    )
+
+    # original error has no `diag` attribute
+    original_error = Exception(
+        'duplicate key value violates unique constraint "uq_organization_events_source_event_type"\n'
+        'DETAIL: Key (source_type, source_event_id, event_type)=(slack, ev-1, task_created) already exists.'
+    )
+    duplicate_error = IntegrityError(
+        '(psycopg2.errors.UniqueViolation) duplicate key value violates unique constraint "uq_organization_events_source_event_type"',
+        {},
+        original_error,
+    )
+
+    class FakeQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            return None
+
+    class FakeSession:
+        def __init__(self):
+            self.rollback_called = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def query(self, *args, **kwargs):
+            return FakeQuery()
+
+        def add(self, record):
+            pass
+
+        def commit(self):
+            raise duplicate_error
+
+        def rollback(self):
+            self.rollback_called = True
+
+    fake_session = FakeSession()
+    monkeypatch.setattr(
+        repository_module,
+        "SessionLocal",
+        lambda: fake_session,
+    )
+
+    PostgreSQLOrganizationEventRepository().save(
+        event,
+        source_type="slack",
+        source_event_id="no-diag-duplicate-event",
+    )
+    assert fake_session.rollback_called
+
+
+def test_save_ignores_concurrent_duplicate_sqlite_format(monkeypatch):
+    """
+    SQLite format error messages matching composite columns are safely absorbed.
+    """
+    from sqlalchemy.exc import IntegrityError
+    from domain.organization import OrganizationEvent, OrganizationEventType
+    from infrastructure.database import organization_event_repository as repository_module
+
+    event = OrganizationEvent(
+        event_type=OrganizationEventType.TASK_CREATED,
+        summary="Prepare deployment report",
+        observations=[],
+        confidence=0.9,
+    )
+
+    original_error = Exception(
+        'UNIQUE constraint failed: organization_events.source_type, organization_events.source_event_id, organization_events.event_type'
+    )
+    duplicate_error = IntegrityError(
+        '(sqlite3.IntegrityError) UNIQUE constraint failed: organization_events.source_type, organization_events.source_event_id, organization_events.event_type',
+        {},
+        original_error,
+    )
+
+    class FakeQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            return None
+
+    class FakeSession:
+        def __init__(self):
+            self.rollback_called = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def query(self, *args, **kwargs):
+            return FakeQuery()
+
+        def add(self, record):
+            pass
+
+        def commit(self):
+            raise duplicate_error
+
+        def rollback(self):
+            self.rollback_called = True
+
+    fake_session = FakeSession()
+    monkeypatch.setattr(
+        repository_module,
+        "SessionLocal",
+        lambda: fake_session,
+    )
+
+    PostgreSQLOrganizationEventRepository().save(
+        event,
+        source_type="slack",
+        source_event_id="sqlite-duplicate-event",
+    )
+    assert fake_session.rollback_called
+
 
 def test_save_reraises_unrelated_integrity_error(monkeypatch):
     import pytest
@@ -509,6 +654,7 @@ def test_save_reraises_unrelated_integrity_error(monkeypatch):
         confidence=0.9,
     )
 
+    # 1. Unrelated constraint in structured diag
     original_error = SimpleNamespace(
         diag=SimpleNamespace(constraint_name="some_other_constraint")
     )
@@ -559,3 +705,110 @@ def test_save_reraises_unrelated_integrity_error(monkeypatch):
 
     assert raised.value is integrity_error
     assert fake_session.rollback_called
+
+    # 2. Unrelated integrity error without diag
+    unrelated_no_diag = IntegrityError(
+        "violates foreign key constraint fk_user_id",
+        {},
+        Exception("violates foreign key constraint fk_user_id"),
+    )
+
+    class FakeSession2(FakeSession):
+        def commit(self):
+            raise unrelated_no_diag
+
+    fake_session2 = FakeSession2()
+    monkeypatch.setattr(
+        repository_module,
+        "SessionLocal",
+        lambda: fake_session2,
+    )
+
+    with pytest.raises(IntegrityError) as raised2:
+        PostgreSQLOrganizationEventRepository().save(
+            event,
+            source_type="slack",
+            source_event_id="unrelated-no-diag-error",
+        )
+
+    assert raised2.value is unrelated_no_diag
+    assert fake_session2.rollback_called
+
+
+def test_save_duplicate_session_transaction_behavior(monkeypatch):
+    """
+    Verifies that when a duplicate error is handled:
+    1. session.add(record) was performed.
+    2. session.commit() was attempted.
+    3. session.rollback() was called immediately to reset transaction state.
+    4. The session context manager exits cleanly without raising.
+    """
+    from sqlalchemy.exc import IntegrityError
+    from domain.organization import OrganizationEvent, OrganizationEventType
+    from infrastructure.database import organization_event_repository as repository_module
+
+    event = OrganizationEvent(
+        event_type=OrganizationEventType.TASK_CREATED,
+        summary="Session behavior verification",
+        observations=[],
+        confidence=0.9,
+    )
+
+    duplicate_error = IntegrityError(
+        'violates unique constraint "uq_organization_events_source_event_type"',
+        {},
+        Exception('violates unique constraint "uq_organization_events_source_event_type"'),
+    )
+
+    call_order = []
+
+    class FakeQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            call_order.append("query_first")
+            return None
+
+    class MonitoredSession:
+        def __enter__(self):
+            call_order.append("enter")
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            call_order.append("exit")
+            return False
+
+        def query(self, *args, **kwargs):
+            return FakeQuery()
+
+        def add(self, record):
+            call_order.append("add")
+
+        def commit(self):
+            call_order.append("commit")
+            raise duplicate_error
+
+        def rollback(self):
+            call_order.append("rollback")
+
+    monkeypatch.setattr(
+        repository_module,
+        "SessionLocal",
+        MonitoredSession,
+    )
+
+    PostgreSQLOrganizationEventRepository().save(
+        event,
+        source_type="teams",
+        source_event_id="session-behavior-test",
+    )
+
+    assert call_order == [
+        "enter",
+        "query_first",
+        "add",
+        "commit",
+        "rollback",
+        "exit",
+    ]

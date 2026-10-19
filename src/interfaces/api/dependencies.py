@@ -82,3 +82,13 @@ def get_governance_agent():
     container = get_container()
 
     return container.governance_agent
+
+
+def get_meeting_intelligence_service():
+    """
+    Return the specialist Meeting Intelligence Service.
+    """
+
+    container = get_container()
+
+    return container.meeting_intelligence_service

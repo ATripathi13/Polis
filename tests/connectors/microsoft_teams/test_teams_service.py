@@ -117,3 +117,47 @@ def test_teams_service_returns_empty_for_empty_transcript():
     assert result == []
     assert communication_service.commands == []
     assert cognitive_engine.learned == []
+
+
+def test_teams_service_passes_timing_kwargs_to_normalizer(monkeypatch):
+    segments = [
+        TeamsTranscriptSegment(
+            speaker="Speaker A",
+            text="Hello.",
+            start=timedelta(seconds=1),
+            end=timedelta(seconds=2),
+        ),
+    ]
+
+    monkeypatch.setattr(
+        "connectors.microsoft_teams.services.teams_service.parse_teams_vtt",
+        lambda transcript: segments,
+    )
+
+    received_kwargs = {}
+
+    class KwargCaptureNormalizer:
+        def normalize(self, *, segment, meeting_id, transcript_id, **kwargs):
+            received_kwargs.update(kwargs)
+            return {
+                "segment": segment,
+                "meeting_id": meeting_id,
+                "transcript_id": transcript_id,
+            }
+
+    service = TeamsService(
+        normalizer=KwargCaptureNormalizer(),
+        communication_service=FakeCommunicationService(),
+        cognitive_engine=FakeCognitiveEngine(),
+    )
+
+    service.ingest_transcript(
+        transcript="unused",
+        meeting_id="meeting-123",
+        transcript_id="transcript-456",
+        meeting_start_time="2026-10-14T10:00:00Z",
+        captured_at="2026-10-14T11:00:00Z",
+    )
+
+    assert received_kwargs.get("meeting_start_time") == "2026-10-14T10:00:00Z"
+    assert received_kwargs.get("captured_at") == "2026-10-14T11:00:00Z"

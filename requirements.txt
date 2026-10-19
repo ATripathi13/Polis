@@ -20,7 +20,6 @@ Mako==1.3.12
 MarkupSafe==3.0.3
 packaging==26.2
 pluggy==1.6.0
--e git+https://github.com/ATripathi13/Polis.git@27eae196e9506d94acfeda80b1e4e0bed03c046f#egg=polis
 psycopg==3.3.4
 psycopg-binary==3.3.4
 pyasn1==0.6.4

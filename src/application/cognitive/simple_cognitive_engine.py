@@ -38,6 +38,7 @@ class SimpleCognitiveEngine(
         knowledge_agent=None,
         operations_agent=None,
         governance_agent=None,
+        meeting_intelligence_service=None,
     ) -> None:
 
         self._pipeline = pipeline
@@ -65,6 +66,9 @@ class SimpleCognitiveEngine(
         self._knowledge_agent = knowledge_agent
         self._operations_agent = operations_agent
         self._governance_agent = governance_agent
+        self._meeting_intelligence_service = (
+            meeting_intelligence_service
+        )
 
     @property
     def knowledge_agent(self):
@@ -77,6 +81,10 @@ class SimpleCognitiveEngine(
     @property
     def governance_agent(self):
         return self._governance_agent
+
+    @property
+    def meeting_intelligence_service(self):
+        return self._meeting_intelligence_service
 
     def learn(
         self,
@@ -282,3 +290,29 @@ class SimpleCognitiveEngine(
         if self._governance_agent is not None:
             return self._governance_agent.ask(question)
         return None
+
+    def summarize_meeting(
+        self,
+        meeting_id: str,
+    ) -> Answer:
+        """
+        Summarize a meeting via the specialist Meeting Intelligence capability.
+        """
+        if self._meeting_intelligence_service is not None:
+            return self._meeting_intelligence_service.summarize(meeting_id)
+        return Answer(
+            text="Meeting intelligence service is not configured.",
+            confidence=0.0,
+            evidence=[],
+        )
+
+    def analyze_meeting(
+        self,
+        meeting_id: str,
+    ):
+        """
+        Produce structured meeting intelligence via the specialist Meeting Intelligence capability.
+        """
+        if self._meeting_intelligence_service is not None:
+            return self._meeting_intelligence_service.analyze(meeting_id)
+        raise ValueError("Meeting intelligence service is not configured.")

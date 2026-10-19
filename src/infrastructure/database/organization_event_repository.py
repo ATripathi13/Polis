@@ -13,6 +13,7 @@ from domain.organization import (
     OrganizationEventRepository,
     OrganizationEventType,
 )
+from domain.organization.identity import derive_source_event_id
 from domain.observation import (
     Observation,
     ObservationType,
@@ -29,20 +30,90 @@ class PostgreSQLOrganizationEventRepository(
     PostgreSQL repository for canonical organizational events.
     """
 
+    TARGET_UNIQUE_CONSTRAINT = "uq_organization_events_source_event_type"
+
+    @classmethod
+    def _is_duplicate_constraint_violation(cls, exc: IntegrityError) -> bool:
+        """
+        Determine whether an IntegrityError was caused by a duplicate violation
+        of the target unique constraint uq_organization_events_source_event_type.
+        Supports structured driver diagnostics (e.g. exc.orig.diag.constraint_name)
+        and bounded message matching when diagnostics are unavailable.
+        """
+        original = getattr(exc, "orig", None)
+
+        # 1. Structured driver diagnostics (e.g. psycopg2 / PostgreSQL)
+        diag = getattr(original, "diag", None)
+        constraint_name = getattr(diag, "constraint_name", None)
+        if constraint_name == cls.TARGET_UNIQUE_CONSTRAINT:
+            return True
+
+        # 2. Driver / SQLAlchemy message matching when diagnostics are unavailable
+        candidates: list[str] = []
+        if original is not None:
+            candidates.append(str(original))
+            orig_args = getattr(original, "args", None)
+            if orig_args:
+                for arg in orig_args:
+                    if isinstance(arg, str):
+                        candidates.append(arg)
+            if diag is not None:
+                primary = getattr(diag, "message_primary", None)
+                if primary:
+                    candidates.append(str(primary))
+                detail = getattr(diag, "message_detail", None)
+                if detail:
+                    candidates.append(str(detail))
+
+        candidates.append(str(exc))
+        statement = getattr(exc, "statement", None)
+        if statement:
+            candidates.append(str(statement))
+
+        for text in candidates:
+            if not text:
+                continue
+            if cls.TARGET_UNIQUE_CONSTRAINT in text:
+                return True
+            # Also support SQLite format if SQLite is used in test/embedded environments
+            if (
+                "organization_events." in text
+                and "source_type" in text
+                and "source_event_id" in text
+                and "event_type" in text
+            ):
+                return True
+
+        return False
+
     def save(
         self,
         event: OrganizationEvent,
         *,
         source_type: str,
-        source_event_id: str,
+        source_event_id: str | None = None,
         correlation_id: str | Identifier | None = None,
     ) -> None:
 
         if not source_type.strip():
             raise ValueError("source_type cannot be empty.")
 
-        if not source_event_id.strip():
+        if source_event_id is not None and not source_event_id.strip():
             raise ValueError("source_event_id cannot be empty.")
+
+        effective_source_event_id = (
+            source_event_id.strip() if source_event_id else None
+        )
+        if not effective_source_event_id:
+            derived = derive_source_event_id(
+                event,
+                source_type=source_type,
+                correlation_id=correlation_id,
+            )
+            if derived:
+                effective_source_event_id = derived
+            else:
+                raise ValueError("source_event_id cannot be empty.")
 
         with SessionLocal() as session:
 
@@ -53,7 +124,7 @@ class PostgreSQLOrganizationEventRepository(
                         OrganizationEventModel.source_type
                         == source_type,
                         OrganizationEventModel.source_event_id
-                        == source_event_id,
+                        == effective_source_event_id,
                         OrganizationEventModel.event_type
                         == event.event_type.value,
                     )
@@ -115,7 +186,7 @@ class PostgreSQLOrganizationEventRepository(
                 observations=observations,
                 confidence=event.confidence,
                 source_type=source_type,
-                source_event_id=source_event_id,
+                source_event_id=effective_source_event_id,
                 correlation_id=corr_graph_id,
                 correlation_business_id=corr_business_id,
                 occurred_at=event.occurred_at,
@@ -126,20 +197,9 @@ class PostgreSQLOrganizationEventRepository(
             try:
                 session.commit()
             except IntegrityError as exc:
-                original = exc.orig
-                constraint_name = getattr(
-                    getattr(original, "diag", None),
-                    "constraint_name",
-                    None,
-                )
-                if (
-                    constraint_name
-                    != "uq_organization_events_source_event_type"
-                ):
-                    session.rollback()
-                    raise
-
                 session.rollback()
+                if not self._is_duplicate_constraint_violation(exc):
+                    raise
                 return
 
     def find_by_source_event(

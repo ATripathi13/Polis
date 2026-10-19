@@ -23,7 +23,7 @@ class OrganizationEventRepository(ABC):
         event: OrganizationEvent,
         *,
         source_type: str,
-        source_event_id: str,
+        source_event_id: str | None = None,
         correlation_id: str | Identifier | None = None,
     ) -> None:
         raise NotImplementedError

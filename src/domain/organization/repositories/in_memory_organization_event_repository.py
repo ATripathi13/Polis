@@ -5,6 +5,7 @@ from typing import Any
 from domain.common.identifier import Identifier
 from domain.organization.enums import OrganizationEventType
 from domain.organization.value_objects import OrganizationEvent
+from domain.organization.identity import derive_source_event_id
 
 from .organization_event_repository import OrganizationEventRepository
 
@@ -31,18 +32,32 @@ class InMemoryOrganizationEventRepository(
         event: OrganizationEvent,
         *,
         source_type: str,
-        source_event_id: str,
+        source_event_id: str | None = None,
         correlation_id: str | Identifier | None = None,
     ) -> None:
         if not source_type.strip():
             raise ValueError("source_type cannot be empty.")
 
-        if not source_event_id.strip():
+        if source_event_id is not None and not source_event_id.strip():
             raise ValueError("source_event_id cannot be empty.")
+
+        effective_source_event_id = (
+            source_event_id.strip() if source_event_id else None
+        )
+        if not effective_source_event_id:
+            derived = derive_source_event_id(
+                event,
+                source_type=source_type,
+                correlation_id=correlation_id,
+            )
+            if derived:
+                effective_source_event_id = derived
+            else:
+                raise ValueError("source_event_id cannot be empty.")
 
         key = (
             source_type,
-            source_event_id,
+            effective_source_event_id,
             event.event_type,
         )
 
@@ -51,7 +66,7 @@ class InMemoryOrganizationEventRepository(
             corr = correlation_id or event.correlation_id
             self._metadata[key] = {
                 "source_type": source_type,
-                "source_event_id": source_event_id,
+                "source_event_id": effective_source_event_id,
                 "correlation_id": corr,
             }
 

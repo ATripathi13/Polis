@@ -65,9 +65,24 @@ class MeetingIntelligenceService:
         event_context = []
 
         if self._organization_event_repository is not None:
-            try:
+            if callable(
+                getattr(
+                    self._organization_event_repository,
+                    "find_by_correlation",
+                    None,
+                )
+            ):
+                organization_events = (
+                    self._organization_event_repository.find_by_correlation(
+                        meeting_id
+                    )
+                )
+            elif callable(
+                getattr(self._organization_event_repository, "all", None)
+            ):
+                # Compatibility for legacy repositories without correlation lookup.
                 organization_events = self._organization_event_repository.all()
-            except Exception:
+            else:
                 organization_events = []
 
             seen_events = set()
@@ -89,10 +104,27 @@ class MeetingIntelligenceService:
                         break
 
                 if not matched:
+                    corr = getattr(event, "correlation_id", None)
+                    if corr is not None:
+                        corr_str = (
+                            corr.business_id
+                            if hasattr(corr, "business_id") and corr.business_id
+                            else str(getattr(corr, "graph_id", corr))
+                        )
+                        if corr_str == meeting_id:
+                            matched = True
+
+                if not matched:
                     continue
 
+                event_type_str = (
+                    event.event_type.value
+                    if hasattr(event.event_type, "value")
+                    else str(event.event_type)
+                )
+
                 key = (
-                    event.event_type.value,
+                    event_type_str,
                     event.summary,
                 )
 
@@ -101,7 +133,7 @@ class MeetingIntelligenceService:
 
                 seen_events.add(key)
                 event_context.append(
-                    f"{event.event_type.value}: {event.summary}"
+                    f"{event_type_str}: {event.summary}"
                 )
 
         context = "\n\n".join(context_parts)
@@ -131,7 +163,17 @@ class MeetingIntelligenceService:
                         )
                     )
                     parsed = self._parse_structured_response(section_response)
-                    section_results.append(parsed)
+                    section_results.append(
+                        {
+                            "summary": parsed.summary,
+                            "topics": parsed.topics,
+                            "decisions": parsed.decisions,
+                            "action_items": parsed.action_items,
+                            "risks": parsed.risks,
+                            "open_questions": parsed.open_questions,
+                            "confidence": parsed.confidence,
+                        }
+                    )
 
                 response = self._llm_client.generate(
                     self._build_analysis_synthesis_prompt(
@@ -173,14 +215,28 @@ class MeetingIntelligenceService:
                 evidence=list(evidence or []),
             )
 
-        summary = str(data.get("summary", "")).strip()
+        if not isinstance(data, dict):
+            return MeetingIntelligenceResult(
+                summary=(
+                    "I found the meeting transcript, but I couldn't "
+                    "generate reliable structured meeting intelligence."
+                ),
+                confidence=0.0,
+                evidence=list(evidence or []),
+            )
+
+        summary = str(data.get("summary", "") or "").strip()
         if not summary:
             summary = (
                 "I found the meeting transcript, but I couldn't "
                 "generate reliable structured meeting intelligence."
             )
 
-        confidence = float(data.get("confidence", 0.0))
+        try:
+            raw_confidence = data.get("confidence", 0.0)
+            confidence = float(raw_confidence if raw_confidence is not None else 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
         confidence = min(1.0, max(0.0, confidence))
 
         def _list(name: str) -> list[str]:

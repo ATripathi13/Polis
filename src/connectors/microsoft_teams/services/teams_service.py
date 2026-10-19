@@ -5,6 +5,7 @@ Microsoft Teams Application Service.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from application.cognitive import CognitiveEngine
 
@@ -56,6 +57,9 @@ class TeamsService:
         transcript: str,
         meeting_id: str,
         transcript_id: str,
+        meeting_start_time: Any | None = None,
+        captured_at: Any | None = None,
+        **kwargs: Any,
     ) -> list[CommunicationEvent]:
         """
         Parse, normalize, persist, and cognitively process
@@ -68,12 +72,20 @@ class TeamsService:
 
         saved_events: list[CommunicationEvent] = []
 
+        normalize_kwargs: dict[str, Any] = {}
+        if meeting_start_time is not None:
+            normalize_kwargs["meeting_start_time"] = meeting_start_time
+        if captured_at is not None:
+            normalize_kwargs["captured_at"] = captured_at
+        normalize_kwargs.update(kwargs)
+
         for segment in segments:
 
             communication = self._normalizer.normalize(
                 segment=segment,
                 meeting_id=meeting_id,
                 transcript_id=transcript_id,
+                **normalize_kwargs,
             )
 
             command = IngestCommunicationCommand(

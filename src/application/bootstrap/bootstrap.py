@@ -438,6 +438,7 @@ def bootstrap(
         knowledge_agent=knowledge_agent,
         operations_agent=operations_agent,
         governance_agent=governance_agent,
+        meeting_intelligence_service=meeting_intelligence_service,
     )
     return ApplicationContainer(
         engine=engine,
