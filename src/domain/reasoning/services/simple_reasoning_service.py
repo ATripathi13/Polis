@@ -93,10 +93,13 @@ class SimpleReasoningService(
 
         normalized = question_text.lower().strip()
 
-        if "today" in normalized:
+        # Ignore relative-date words inside quoted message text.
+        unquoted = re.sub(r"""["'][^"']*["']""", " ", normalized)
+
+        if re.search(r"\btoday\b", unquoted):
             return cls._date_window(now.date())
 
-        if "yesterday" in normalized:
+        if re.search(r"\byesterday\b", unquoted):
             return cls._date_window(
                 now.date() - timedelta(days=1)
             )
@@ -104,11 +107,13 @@ class SimpleReasoningService(
         explicit_date_patterns = (
             r"\b(\d{1,2})(?:st|nd|rd|th)?\s+"
             r"(january|february|march|april|may|june|july|august|"
-            r"september|october|november|december)\b",
+            r"september|october|november|december)"
+            r"(?:\s+(\d{4}))?\b",
 
             r"\b(january|february|march|april|may|june|july|august|"
             r"september|october|november|december)\s+"
-            r"(\d{1,2})(?:st|nd|rd|th)?\b",
+            r"(\d{1,2})(?:st|nd|rd|th)?"
+            r"(?:,?\s+(\d{4}))?\b",
         )
 
         for pattern in explicit_date_patterns:
@@ -132,7 +137,7 @@ class SimpleReasoningService(
                 "december": 12,
             }
 
-            first, second = match.groups()
+            first, second, explicit_year = match.groups()
 
             if first.isdigit():
                 day = int(first)
@@ -141,7 +146,7 @@ class SimpleReasoningService(
                 month = month_names[first]
                 day = int(second)
 
-            year = now.year
+            year = int(explicit_year) if explicit_year else now.year
 
             try:
                 target_date = date(
@@ -176,6 +181,20 @@ class SimpleReasoningService(
         """
 
         query = question.text
+
+        # For explicit phrase searches, retrieve the message text itself.
+        exact_phrase = re.search(
+            r"""(?:search|find|look up)\s+(?:for\s+)?(?:the\s+)?exact phrase\s+["']([^"']+)["']""",
+            query,
+            flags=re.IGNORECASE,
+        )
+        quoted_phrase = re.search(r"""["']([^"']+)["']""", query)
+
+        if exact_phrase:
+            query = exact_phrase.group(1)
+        elif quoted_phrase:
+            query = quoted_phrase.group(1)
+
         # Remove explicit Slack user mentions because
         # actor_id already performs the identity filtering.
         query = re.sub(
@@ -383,8 +402,22 @@ class SimpleReasoningService(
                 self.TIMEZONE
             )
 
+            actor = getattr(communication, "actor", None)
+            sender_name = getattr(actor, "display_name", None) if actor else None
+            identity = getattr(actor, "identity", None) if actor else None
+            sender_id = getattr(identity, "internal_id", None) if identity else None
+
+            sender_line = ""
+            if sender_name and sender_id:
+                sender_line = f"Sender: {sender_name} ({sender_id})\n"
+            elif sender_name:
+                sender_line = f"Sender: {sender_name}\n"
+            elif sender_id:
+                sender_line = f"Sender: {sender_id}\n"
+
             evidence.append(
                 (
+                    f"{sender_line}"
                     f"Communication time: "
                     f"{created_at.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
                     f"Message: {body}"
