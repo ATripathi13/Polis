@@ -76,68 +76,92 @@ provider = FakeTranscriptProvider()
 transcript_service = FakeTranscriptService()
 teams_service = FakeTeamsService()
 
-app.dependency_overrides[
-    get_meeting_transcript_provider
-] = lambda: provider
-
-app.dependency_overrides[
-    get_meeting_transcript_service
-] = lambda: transcript_service
-
-app.dependency_overrides[
-    get_teams_service
-] = lambda: teams_service
 
 
 client = TestClient(app)
 
 
+def install_fake_services():
+    dependencies = (
+        get_meeting_transcript_provider,
+        get_meeting_transcript_service,
+        get_teams_service,
+    )
+    previous = {
+        dep: app.dependency_overrides.get(dep)
+        for dep in dependencies
+    }
+    existed = {
+        dep: dep in app.dependency_overrides
+        for dep in dependencies
+    }
+
+    app.dependency_overrides[get_meeting_transcript_provider] = lambda: provider
+    app.dependency_overrides[get_meeting_transcript_service] = lambda: transcript_service
+    app.dependency_overrides[get_teams_service] = lambda: teams_service
+
+    return dependencies, previous, existed
+
+
+def restore_fake_services(state):
+    dependencies, previous, existed = state
+    for dep in dependencies:
+        if existed[dep]:
+            app.dependency_overrides[dep] = previous[dep]
+        else:
+            app.dependency_overrides.pop(dep, None)
+
+
 def test_teams_webhook_processes_transcript_notification():
+    state = install_fake_services()
+    try:
+        payload = {
+            "value": [
+                {
+                    "clientState": "polis-teams-transcript",
+                    "resource": (
+                        "users('user-123')/"
+                        "onlineMeetings('meeting-456')/"
+                        "transcripts('transcript-789')"
+                    ),
+                    "resourceData": {
+                        "id": "transcript-789",
+                    },
+                }
+            ]
+        }
 
-    payload = {
-        "value": [
-            {
-                "clientState": "polis-teams-transcript",
-                "resource": (
-                    "users('user-123')/"
-                    "onlineMeetings('meeting-456')/"
-                    "transcripts('transcript-789')"
-                ),
-                "resourceData": {
-                    "id": "transcript-789",
-                },
-            }
-        ]
-    }
+        response = client.post(
+            "/teams/webhook",
+            json=payload,
+        )
 
-    response = client.post(
-        "/teams/webhook",
-        json=payload,
-    )
+        assert response.status_code == 200
+        assert response.json() == {"status": "accepted"}
 
-    assert response.status_code == 200
-    assert response.json() == {"status": "accepted"}
+        assert len(transcript_service.ingested) == 1
 
-    assert len(transcript_service.ingested) == 1
+        assert (
+            transcript_service.ingested[0].meeting_id
+            == "meeting-456"
+        )
 
-    assert (
-        transcript_service.ingested[0].meeting_id
-        == "meeting-456"
-    )
+        assert len(teams_service.calls) == 1
 
-    assert len(teams_service.calls) == 1
+        provider_timestamp = provider.provider_timestamp
 
-    provider_timestamp = provider.provider_timestamp
+        assert teams_service.calls[0] == {
+            "transcript": "Hello from the TNT4 Teams meeting.",
+            "meeting_id": "meeting-456",
+            "transcript_id": "transcript-789",
+            "kwargs": {
+                "meeting_start_time": "2026-10-19T09:00:00+00:00",
+                "captured_at": provider_timestamp,
+            },
+        }
+    finally:
+        restore_fake_services(state)
 
-    assert teams_service.calls[0] == {
-        "transcript": "Hello from the TNT4 Teams meeting.",
-        "meeting_id": "meeting-456",
-        "transcript_id": "transcript-789",
-        "kwargs": {
-            "meeting_start_time": "2026-10-19T09:00:00+00:00",
-            "captured_at": provider_timestamp,
-        },
-    }
 def test_teams_webhook_returns_validation_token():
 
     validation_token = "teams-validation-token-123"
@@ -157,43 +181,46 @@ def test_teams_webhook_returns_validation_token():
 
 
 def test_teams_webhook_logs_structured_progress(caplog):
-    caplog.set_level(logging.INFO, logger="interfaces.api.routes.teams")
-    transcript_service.ingested.clear()
-    teams_service.calls.clear()
+    state = install_fake_services()
+    try:
+        caplog.set_level(logging.INFO, logger="interfaces.api.routes.teams")
+        transcript_service.ingested.clear()
+        teams_service.calls.clear()
 
-    payload = {
-        "value": [
-            {
-                "clientState": "polis-teams-transcript",
-                "resource": (
-                    "users('user-123')/"
-                    "onlineMeetings('meeting-456')/"
-                    "transcripts('transcript-789')"
-                ),
-                "resourceData": {
-                    "id": "transcript-789",
-                },
-            }
+        payload = {
+            "value": [
+                {
+                    "clientState": "polis-teams-transcript",
+                    "resource": (
+                        "users('user-123')/"
+                        "onlineMeetings('meeting-456')/"
+                        "transcripts('transcript-789')"
+                    ),
+                    "resourceData": {
+                        "id": "transcript-789",
+                    },
+                }
+            ]
+        }
+
+        response = client.post("/teams/webhook", json=payload)
+        assert response.status_code == 200
+
+        teams_records = [
+            r for r in caplog.records if r.name == "interfaces.api.routes.teams"
         ]
-    }
+        events = [getattr(r, "event", None) for r in teams_records]
 
-    response = client.post("/teams/webhook", json=payload)
-    assert response.status_code == 200
+        assert "teams_notification_parsed" in events
+        assert "teams_transcript_retrieved" in events
+        assert "teams_transcript_persisted" in events
+        assert "teams_cognitive_processing_success" in events
 
-    teams_records = [
-        r for r in caplog.records if r.name == "interfaces.api.routes.teams"
-    ]
-    events = [getattr(r, "event", None) for r in teams_records]
-
-    assert "teams_notification_parsed" in events
-    assert "teams_transcript_retrieved" in events
-    assert "teams_transcript_persisted" in events
-    assert "teams_cognitive_processing_success" in events
-
-    # Ensure no raw transcript text is logged
-    for r in teams_records:
-        assert "Hello from the TNT4 Teams meeting." not in r.getMessage()
-
+        # Ensure no raw transcript text is logged
+        for r in teams_records:
+            assert "Hello from the TNT4 Teams meeting." not in r.getMessage()
+    finally:
+        restore_fake_services(state)
 
 def test_teams_webhook_logs_warning_when_transcript_not_found(caplog):
     caplog.set_level(logging.WARNING, logger="interfaces.api.routes.teams")
@@ -208,9 +235,10 @@ def test_teams_webhook_logs_warning_when_transcript_not_found(caplog):
         ):
             return None
 
-    app.dependency_overrides[
-        get_meeting_transcript_provider
-    ] = lambda: EmptyTranscriptProvider()
+    dependency = get_meeting_transcript_provider
+    had_previous_override = dependency in app.dependency_overrides
+    previous_override = app.dependency_overrides.get(dependency)
+    app.dependency_overrides[dependency] = lambda: EmptyTranscriptProvider()
     try:
         payload = {
             "value": [
@@ -240,9 +268,10 @@ def test_teams_webhook_logs_warning_when_transcript_not_found(caplog):
             for r in warning_records
         )
     finally:
-        app.dependency_overrides[
-            get_meeting_transcript_provider
-        ] = lambda: provider
+        if had_previous_override:
+            app.dependency_overrides[dependency] = previous_override
+        else:
+            app.dependency_overrides.pop(dependency, None)
 
 
 def test_teams_webhook_logs_warning_on_unparseable_resource(caplog):
