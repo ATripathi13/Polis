@@ -262,37 +262,7 @@ class PostgreSQLCommunicationRepository(
                 searchable_text = body.lower()
 
                 if exclude_questions:
-
-                    if searchable_text.endswith("?"):
-                        continue
-
-                    question_starters = (
-                        "what ",
-                        "why ",
-                        "who ",
-                        "where ",
-                        "when ",
-                        "which ",
-                        "how ",
-                        "can ",
-                        "could ",
-                        "would ",
-                        "should ",
-                        "is ",
-                        "are ",
-                        "do ",
-                        "does ",
-                        "did ",
-                        "tell me ",
-                        "show me ",
-                        "list ",
-                        "summarize ",
-                        "explain ",
-                    )
-
-                    if searchable_text.startswith(
-                        question_starters
-                    ):
+                    if self._to_domain(record).is_question():
                         continue
 
                 if not meaningful_words:
