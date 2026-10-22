@@ -67,6 +67,8 @@ def create_listener():
         slack_service,
         reminder_service=application.reminder_service,
         slack_client=slack_client,
+        calendar_agent=application.calendar_agent,
+        calendar_worker=application.calendar_worker,
     )
 
 

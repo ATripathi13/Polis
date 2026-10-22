@@ -73,6 +73,7 @@ from infrastructure.database import (
     PostgreSQLOperationalItemRepository,
     PostgreSQLOrganizationEventRepository,
     PostgreSQLGovernanceRepository,
+    PostgreSQLCalendarRepository,
 )
 
 from engines.communication.infrastructure.repositories import (
@@ -166,6 +167,26 @@ from infrastructure.database import (
 from infrastructure.documents import (
     DocumentParser,
     DocumentChunker,
+)
+
+from domain.calendar.value_objects import (
+    CalendarReminderPolicy,
+)
+
+from application.calendar import (
+    AudienceResolutionService,
+    SlackMembershipDirectoryProvider,
+    CalendarService,
+    CalendarAgent,
+    CalendarReminderWorker,
+)
+
+from engines.slack.services.slack_identity_service import (
+    SlackIdentityService,
+)
+
+from engines.slack.services.slack_client import (
+    SlackClient,
 )
 
 def bootstrap(
@@ -428,6 +449,36 @@ def bootstrap(
         governance_agent=governance_agent,
     )
 
+    calendar_repository = PostgreSQLCalendarRepository()
+    slack_identity_service = SlackIdentityService()
+    membership_provider = SlackMembershipDirectoryProvider(
+        slack_identity_service=slack_identity_service,
+    )
+    audience_service = AudienceResolutionService(
+        directory_provider=membership_provider,
+        organization_channel_id=settings.calendar_organization_channel,
+    )
+    calendar_reminder_policy = CalendarReminderPolicy(
+        offset_hours=settings.calendar_reminder_offset_hours,
+    )
+    calendar_service = CalendarService(
+        repository=calendar_repository,
+        audience_service=audience_service,
+        reminder_policy=calendar_reminder_policy,
+        default_timezone=settings.calendar_default_timezone,
+    )
+    calendar_agent = CalendarAgent(
+        service=calendar_service,
+        default_timezone=settings.calendar_default_timezone,
+    )
+    calendar_slack_client = SlackClient()
+    calendar_worker = CalendarReminderWorker(
+        repository=calendar_repository,
+        slack_client=calendar_slack_client,
+        poll_interval_seconds=settings.calendar_worker_poll_interval_seconds,
+        max_attempts=settings.calendar_max_retry_attempts,
+    )
+
     engine = SimpleCognitiveEngine(
         pipeline,
         reasoning,
@@ -439,6 +490,7 @@ def bootstrap(
         operations_agent=operations_agent,
         governance_agent=governance_agent,
         meeting_intelligence_service=meeting_intelligence_service,
+        calendar_agent=calendar_agent,
     )
     return ApplicationContainer(
         engine=engine,
@@ -461,6 +513,10 @@ def bootstrap(
         knowledge_agent=knowledge_agent,
         operations_agent=operations_agent,
         governance_agent=governance_agent,
+        calendar_repository=calendar_repository,
+        calendar_service=calendar_service,
+        calendar_agent=calendar_agent,
+        calendar_worker=calendar_worker,
     )
 
 

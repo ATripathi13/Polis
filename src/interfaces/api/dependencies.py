@@ -4,6 +4,11 @@ Dependency providers for the API.
 
 from __future__ import annotations
 
+import hmac
+
+from fastapi import Header, HTTPException, status
+from infrastructure.config.settings import get_settings
+
 from application.cognitive import (
     SimpleCognitiveEngine,
 )
@@ -92,3 +97,19 @@ def get_meeting_intelligence_service():
     container = get_container()
 
     return container.meeting_intelligence_service
+
+def require_internal_api_key(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> None:
+    """Authenticate trusted internal service requests."""
+    expected_key = get_settings().polis_api_key
+
+    if (
+        not expected_key
+        or not x_api_key
+        or not hmac.compare_digest(x_api_key, expected_key)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API key.",
+        )

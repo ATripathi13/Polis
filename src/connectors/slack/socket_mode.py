@@ -20,6 +20,8 @@ from connectors.slack.models import (
     SlackMessage,
 )
 
+from domain.reasoning.value_objects.conversation_context import ConversationContext
+
 from connectors.slack.services import SlackService
 
 from domain.reasoning import (
@@ -39,11 +41,15 @@ class SlackSocketMode:
         slack_service: SlackService,
         reminder_service,
         slack_client,
+        calendar_agent=None,
+        calendar_worker=None,
     ) -> None:
 
         self._slack_service = slack_service
         self._reminder_service = reminder_service
         self._slack_client = slack_client
+        self._calendar_agent = calendar_agent
+        self._calendar_worker = calendar_worker
         self._identity_service = SlackIdentityService()
         self._settings = get_settings()
 
@@ -253,6 +259,23 @@ class SlackSocketMode:
                 return
 
             # ======================================================
+            # Detect Calendar Agent commands and interactions.
+            # ======================================================
+
+            if self._calendar_agent is not None:
+                calendar_response = self._calendar_agent.handle_message(
+                    question_text,
+                    user_id=user_id,
+                    channel_id=channel_id,
+                )
+                if calendar_response is not None:
+                    say(
+                        text=calendar_response,
+                        thread_ts=thread_ts or ts,
+                    )
+                    return
+
+            # ======================================================
             # Ask the POLIS cognitive engine.
             # ======================================================
 
@@ -260,6 +283,11 @@ class SlackSocketMode:
 
                 question = Question(
                     text=question_text,
+                    context=ConversationContext(
+                        user_id=user_id,
+                        channel_id=channel_id,
+                        thread_ts=thread_ts or ts,
+                    ),
                 )
 
                 answer = self._slack_service.ask(
@@ -362,6 +390,9 @@ class SlackSocketMode:
             daemon=True,
         )
         reminder_worker.start()
+
+        if self._calendar_worker is not None:
+            self._calendar_worker.start()
 
         handler = SocketModeHandler(
             self._app,

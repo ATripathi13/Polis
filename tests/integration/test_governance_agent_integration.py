@@ -68,7 +68,7 @@ from application.governance import GovernanceAgent
 from application.cognitive import SimpleCognitiveEngine
 from application.services.knowledge_acceptance_service import KnowledgeAcceptanceService
 from interfaces.api.app import app
-from interfaces.api.dependencies import get_governance_agent
+from interfaces.api.dependencies import get_governance_agent, require_internal_api_key
 
 
 class FakeOperationalUnderstanding:
@@ -303,6 +303,7 @@ def test_cognitive_engine_unifies_governance_evidence(full_pipeline, gov_agent, 
 # -----------------------------------------------------------------------------
 
 def test_api_ask_governance_endpoint(gov_agent, gov_repo):
+    app.dependency_overrides[require_internal_api_key] = lambda: None
     client = TestClient(app)
     app.dependency_overrides[get_governance_agent] = lambda: gov_agent
 

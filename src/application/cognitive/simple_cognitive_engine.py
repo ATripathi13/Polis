@@ -39,6 +39,7 @@ class SimpleCognitiveEngine(
         operations_agent=None,
         governance_agent=None,
         meeting_intelligence_service=None,
+        calendar_agent=None,
     ) -> None:
 
         self._pipeline = pipeline
@@ -69,6 +70,7 @@ class SimpleCognitiveEngine(
         self._meeting_intelligence_service = (
             meeting_intelligence_service
         )
+        self._calendar_agent = calendar_agent
 
     @property
     def knowledge_agent(self):
@@ -81,6 +83,10 @@ class SimpleCognitiveEngine(
     @property
     def governance_agent(self):
         return self._governance_agent
+
+    @property
+    def calendar_agent(self):
+        return self._calendar_agent
 
     @property
     def meeting_intelligence_service(self):
@@ -233,11 +239,21 @@ class SimpleCognitiveEngine(
                     )
                 )
 
+            calendar_evidence: list[str] = []
+
+            if self._calendar_agent is not None:
+                calendar_evidence = (
+                    self._calendar_agent.retrieve_evidence(
+                        question,
+                    )
+                )
+
             unified_evidence = (
                 organizational_evidence
                 + operational_evidence
                 + knowledge_base_evidence
                 + governance_evidence
+                + calendar_evidence
             )
 
             if unified_evidence:
@@ -289,6 +305,17 @@ class SimpleCognitiveEngine(
         """
         if self._governance_agent is not None:
             return self._governance_agent.ask(question)
+        return None
+
+    def ask_calendar(
+        self,
+        question: Question | str,
+    ):
+        """
+        Ask the specialist Calendar Agent directly.
+        """
+        if self._calendar_agent is not None:
+            return self._calendar_agent.ask(question)
         return None
 
     def summarize_meeting(

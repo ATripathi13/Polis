@@ -58,7 +58,7 @@ from engines.communication.domain.value_objects import (
     CommunicationIdentity,
 )
 from interfaces.api.app import app
-from interfaces.api.dependencies import get_operations_agent, get_cognitive_engine
+from interfaces.api.dependencies import get_operations_agent, get_cognitive_engine, require_internal_api_key
 
 
 class FakeOperationalUnderstanding:
@@ -246,6 +246,7 @@ def test_cognitive_engine_unifies_operations_agent_evidence(full_pipeline, op_ag
 # -----------------------------------------------------------------------------
 
 def test_api_ask_operations_endpoint(op_agent, op_repo):
+    app.dependency_overrides[require_internal_api_key] = lambda: None
     item = OperationalItem.create(
         item_type=OperationalItemType.TASK,
         summary="Renew domain ssl certificates",

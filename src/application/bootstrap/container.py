@@ -59,6 +59,16 @@ from application.governance import (
     GovernanceAgent,
 )
 
+from domain.calendar.repositories import (
+    CalendarRepository,
+)
+
+from application.calendar import (
+    CalendarAgent,
+    CalendarService,
+    CalendarReminderWorker,
+)
+
 
 @dataclass(slots=True)
 class ApplicationContainer:
@@ -98,4 +108,9 @@ class ApplicationContainer:
     knowledge_agent: KnowledgeAgent | None = None
     operations_agent: OperationsAgent | None = None
     governance_agent: GovernanceAgent | None = None
+
+    calendar_repository: CalendarRepository | None = None
+    calendar_service: CalendarService | None = None
+    calendar_agent: CalendarAgent | None = None
+    calendar_worker: CalendarReminderWorker | None = None
 

@@ -198,3 +198,49 @@ def test_cognitive_engine():
         answer.text
         == "We use PostgreSQL."
     )
+
+
+def test_cognitive_engine_preserves_requester_context_for_calendar_agent():
+    from domain.reasoning import Answer
+    from domain.reasoning.value_objects.conversation_context import (
+        ConversationContext,
+    )
+
+    class FakeQuestionAnswering:
+        def retrieve_evidence(self, question):
+            return []
+
+        def answer_from_evidence(self, question, evidence):
+            return Answer(text="Calendar evidence checked.")
+
+        def answer(self, question):
+            return Answer(text="Fallback answer.")
+
+    class FakeCalendarAgent:
+        def __init__(self):
+            self.received_question = None
+
+        def retrieve_evidence(self, question):
+            self.received_question = question
+            return []
+
+    calendar_agent = FakeCalendarAgent()
+    engine = SimpleCognitiveEngine(
+        pipeline=None,
+        question_answering=FakeQuestionAnswering(),
+        calendar_agent=calendar_agent,
+    )
+
+    question = Question(
+        text="What is on my calendar?",
+        context=ConversationContext(
+            user_id="U_TARGET",
+            channel_id="C_MAIN",
+            thread_ts="123.456",
+        ),
+    )
+
+    engine.ask(question)
+
+    assert calendar_agent.received_question is question
+    assert calendar_agent.received_question.context.user_id == "U_TARGET"

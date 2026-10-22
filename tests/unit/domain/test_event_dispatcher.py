@@ -1,4 +1,4 @@
-from domain.common.event import DomainEvent
+﻿from domain.common.event import DomainEvent
 
 from domain.events import (
     DomainEventHandler,
@@ -7,11 +7,11 @@ from domain.events import (
 )
 
 
-class TestEvent(DomainEvent):
+class SampleEvent(DomainEvent):
     pass
 
 
-class TestHandler(DomainEventHandler):
+class SampleHandler(DomainEventHandler):
 
     def __init__(self):
         self.called = False
@@ -27,10 +27,10 @@ def test_dispatch():
 
     registry = EventRegistry()
 
-    handler = TestHandler()
+    handler = SampleHandler()
 
     registry.register(
-        TestEvent,
+        SampleEvent,
         handler,
     )
 
@@ -39,7 +39,7 @@ def test_dispatch():
     )
 
     dispatcher.dispatch(
-        TestEvent(),
+        SampleEvent(),
     )
 
     assert handler.called
