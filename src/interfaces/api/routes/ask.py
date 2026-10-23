@@ -25,6 +25,7 @@ from interfaces.api.dependencies import (
     get_knowledge_agent,
     get_operations_agent,
     get_governance_agent,
+    require_internal_api_key
 )
 from interfaces.api.models import (
     QuestionRequest,
@@ -43,6 +44,7 @@ router = APIRouter(
 @router.post(
     "",
     response_model=AnswerResponse,
+    dependencies=[Depends(require_internal_api_key)],
 )
 def ask(
     request: QuestionRequest,
@@ -73,6 +75,7 @@ def ask(
 @router.post(
     "/knowledge",
     response_model=KnowledgeResultResponse,
+    dependencies=[Depends(require_internal_api_key)],
 )
 def ask_knowledge(
     request: QuestionRequest,
@@ -138,6 +141,7 @@ def ask_knowledge(
 @router.post(
     "/operations",
     response_model=OperationsResultResponse,
+    dependencies=[Depends(require_internal_api_key)],
 )
 def ask_operations(
     request: QuestionRequest,
@@ -171,6 +175,7 @@ def ask_operations(
 @router.post(
     "/governance",
     response_model=GovernanceResultResponse,
+    dependencies=[Depends(require_internal_api_key)],
 )
 def ask_governance(
     request: QuestionRequest,

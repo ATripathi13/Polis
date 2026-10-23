@@ -580,7 +580,10 @@ class KnowledgeAgent:
             "a", "an", "the", "in", "on", "at", "to", "for", "of", "and",
             "is", "are", "was", "were", "do", "does", "did", "what", "which",
             "who", "how", "when", "where", "why", "we", "our", "us", "you",
-            "your", "it", "its", "they", "them", "their", "this", "that", "these", "those",
+            "your", "it", "its", "they", "them", "their", "this", "that",
+            "these", "those",
+            "i", "me", "my", "mine", "am", "today", "work", "working",
+            "doing", "currently",
         }
         tokens = {t for t in re.findall(r"\w+", query.lower()) if t not in STOP_WORDS}
         if not tokens:

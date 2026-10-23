@@ -41,6 +41,10 @@ from .knowledge_base_repository import (
     PostgreSQLKnowledgeBaseDocumentRepository,
 )
 
+from .calendar_repository import (
+    PostgreSQLCalendarRepository,
+)
+
 __all__ = [
     "Base",
     "SessionLocal",
@@ -55,4 +59,5 @@ __all__ = [
     "PostgreSQLKnowledgeBaseChunkRepository",
     "PostgreSQLOrganizationEventRepository",
     "PostgreSQLGovernanceRepository",
+    "PostgreSQLCalendarRepository",
 ]

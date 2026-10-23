@@ -1,8 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -759,3 +759,54 @@ class GovernanceFindingModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     remediation_required: Mapped[bool] = mapped_column(Boolean, nullable=False)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False)
+
+
+class CalendarEntryModel(Base):
+    __tablename__ = "calendar_entries"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    entry_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    creator_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    timezone: Mapped[str] = mapped_column(String(100), nullable=False, default="UTC")
+    audience_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    audience_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="scheduled", index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CalendarReminderDeliveryModel(Base):
+    __tablename__ = "calendar_reminder_deliveries"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "idempotency_key",
+            name="uq_calendar_reminder_deliveries_idempotency_key",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    entry_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("calendar_entries.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    recipient_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    delivery_channel: Mapped[str] = mapped_column(String(50), nullable=False, default="dm")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending", index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

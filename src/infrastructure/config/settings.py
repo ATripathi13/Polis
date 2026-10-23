@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from infrastructure.config.constants import (
@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     # ==========================================================
     # Security
     # ==========================================================
+
+    polis_api_key: str = Field(
+        default="",
+        alias="POLIS_API_KEY",
+    )
 
     slack_client_id: str = Field(alias="SLACK_CLIENT_ID")
 
@@ -159,6 +164,43 @@ class Settings(BaseSettings):
         default=True,
         alias="ENABLE_GOVERNANCE_ENGINE",
     )
+
+    # ==========================================================
+    # Calendar Agent
+    # ==========================================================
+
+    calendar_reminder_offset_hours: int = Field(
+        default=15,
+        alias="CALENDAR_REMINDER_OFFSET_HOURS",
+    )
+
+    calendar_worker_poll_interval_seconds: int = Field(
+        default=30,
+        alias="CALENDAR_WORKER_POLL_INTERVAL_SECONDS",
+    )
+
+    calendar_organization_channel: str = Field(
+        default="",
+        alias="CALENDAR_ORGANIZATION_CHANNEL",
+    )
+
+    calendar_default_timezone: str = Field(
+        default="Asia/Kolkata",
+        alias="CALENDAR_DEFAULT_TIMEZONE",
+    )
+
+    calendar_max_retry_attempts: int = Field(
+        default=3,
+        alias="CALENDAR_MAX_RETRY_ATTEMPTS",
+    )
+
+    @field_validator("calendar_reminder_offset_hours")
+    @classmethod
+    def validate_calendar_reminder_offset(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("CALENDAR_REMINDER_OFFSET_HOURS must be greater than zero.")
+        return v
+
 
 
 @lru_cache(maxsize=1)

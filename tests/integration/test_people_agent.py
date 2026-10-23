@@ -135,3 +135,131 @@ def test_people_activity_question_flows_through_cognitive_engine():
 
     assert answer is not None
     assert "Akshat" in answer.text
+
+
+def test_people_agent_answers_from_recorded_activity_history():
+    from application.activity import ActivityService, AttendanceCalculator
+
+    class InMemoryActivityRepository:
+        def __init__(self):
+            self.events = []
+            self.source_keys = set()
+
+        def save(self, event):
+            key = (event.person_id, event.source_event_id)
+            if event.source_event_id is not None and key in self.source_keys:
+                return
+            if event.source_event_id is not None:
+                self.source_keys.add(key)
+            self.events.append(event)
+
+        def find_for_person(self, person_id, *, start=None, end=None):
+            events = [
+                event for event in self.events
+                if event.person_id == person_id
+                and (start is None or event.occurred_at >= start)
+                and (end is None or event.occurred_at <= end)
+            ]
+            return sorted(events, key=lambda event: event.occurred_at)
+
+        def find_people_by_name(self, person_name):
+            matches = [
+                event for event in self.events
+                if event.person_name.lower() == person_name.strip().lower()
+            ]
+            latest_by_person = {}
+            for event in sorted(
+                matches,
+                key=lambda event: event.occurred_at,
+                reverse=True,
+            ):
+                latest_by_person.setdefault(event.person_id, event)
+            return list(latest_by_person.values())
+
+        def find_currently_on_break(self):
+            return [
+                event for event in self._latest()
+                if event.activity_type == ActivityType.BREAK_START
+            ]
+
+        def find_currently_working(self):
+            return [
+                event for event in self._latest()
+                if event.activity_type in {
+                    ActivityType.WORK_START,
+                    ActivityType.BREAK_END,
+                }
+            ]
+
+        def find_currently_off_work(self):
+            return [
+                event for event in self._latest()
+                if event.activity_type == ActivityType.WORK_END
+            ]
+
+        def find_latest_for_people(self):
+            return self._latest()
+
+        def _latest(self):
+            latest_by_person = {}
+            for event in sorted(
+                self.events,
+                key=lambda event: event.occurred_at,
+                reverse=True,
+            ):
+                latest_by_person.setdefault(event.person_id, event)
+            return list(latest_by_person.values())
+
+    now = datetime(2026, 10, 21, 12, 0, tzinfo=timezone.utc)
+    repository = InMemoryActivityRepository()
+    activity_service = ActivityService(
+        repository=repository,
+        attendance_calculator=AttendanceCalculator(),
+    )
+
+    activity_service.record(
+        person_id="U123",
+        person_name="Akshat",
+        activity_type=ActivityType.WORK_START,
+        occurred_at=now.replace(hour=9),
+        source=ActivitySource.SLACK,
+        source_event_id="slack-work-start",
+    )
+    activity_service.record(
+        person_id="U123",
+        person_name="Akshat",
+        activity_type=ActivityType.BREAK_START,
+        occurred_at=now.replace(hour=11),
+        source=ActivitySource.SLACK,
+        source_event_id="slack-break-start",
+    )
+    activity_service.record(
+        person_id="U123",
+        person_name="Akshat",
+        activity_type=ActivityType.BREAK_START,
+        occurred_at=now.replace(hour=11),
+        source=ActivitySource.SLACK,
+        source_event_id="slack-break-start",
+    )
+
+    assert len(repository.events) == 2
+
+    activity_questions = ActivityQuestionService(
+        activity_service=activity_service,
+        now_provider=lambda: now,
+    )
+    engine = SimpleCognitiveEngine(
+        pipeline=None,
+        question_answering=FakeQuestionAnswering(),
+        activity_question_service=activity_questions,
+    )
+
+    answer = engine.ask(Question(text="Is Akshat working?"))
+
+    assert answer is not None
+    assert answer.text == "Akshat is not currently working."
+
+    break_answer = engine.ask(Question(text="Is Akshat on break?"))
+
+    assert break_answer is not None
+    assert break_answer.text == "Akshat is currently on break."

@@ -25,7 +25,7 @@ from domain.observation import (
 )
 from domain.reasoning import Question, Answer
 from interfaces.api.app import app
-from interfaces.api.dependencies import get_cognitive_engine, get_knowledge_agent
+from interfaces.api.dependencies import get_cognitive_engine, get_knowledge_agent, require_internal_api_key
 
 
 def test_pipeline_dispatches_events_to_knowledge_agent():
@@ -115,6 +115,7 @@ def test_cognitive_engine_unifies_knowledge_agent_evidence():
 
 
 def test_ask_api_routes_with_knowledge_agent():
+    app.dependency_overrides[require_internal_api_key] = lambda: None
     repo = InMemoryKnowledgeRepository()
     candidate = KnowledgeCandidate(
         subject=KnowledgeSubject(kind="general", identifier="cloud_provider"),

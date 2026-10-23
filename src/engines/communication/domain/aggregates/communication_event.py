@@ -6,6 +6,8 @@ Represents a normalized communication observed by Polis.
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from typing import ClassVar, Self
 
@@ -172,6 +174,13 @@ class CommunicationEvent(AggregateRoot):
 
         if not text:
             return False
+
+        # Ignore leading Slack mentions when detecting question starters.
+        text = re.sub(
+            r"^(?:<@[a-z0-9]+(?:\|[^>]+)?>\s*)+",
+            "",
+            text,
+        )
 
         if text.endswith("?"):
             return True

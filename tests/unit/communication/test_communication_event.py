@@ -226,3 +226,13 @@ def test_detect_normal_statement():
     )
 
     assert not event.is_question()
+
+
+def test_detect_question_prefixed_with_slack_mention():
+    event = create_test_event()
+
+    event.content = Content(
+        body="<@U0C3J7FJ1BN> What did AgenT say about the Publishing Calendar?"
+    )
+
+    assert event.is_question()

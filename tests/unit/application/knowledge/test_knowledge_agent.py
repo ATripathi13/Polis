@@ -301,3 +301,74 @@ def test_domain_knowledge_lookup_without_repository_returns_empty():
     agent = KnowledgeAgent(knowledge_repository=None)
 
     assert agent._find_matching_domain_knowledge("database") == []
+
+
+def test_domain_knowledge_lookup_ignores_generic_single_word_match():
+    repo = InMemoryKnowledgeRepository()
+    repo.save(
+        KnowledgeCandidate(
+            subject=KnowledgeSubject(
+                kind="project",
+                identifier="publishing_calendar",
+            ),
+            summary="The team is working on the publishing calendar.",
+        )
+    )
+    repo.save(
+        KnowledgeCandidate(
+            subject=KnowledgeSubject(
+                kind="infrastructure",
+                identifier="database_backup",
+            ),
+            summary="The database backup runs every night.",
+        )
+    )
+    repo.save(
+        KnowledgeCandidate(
+            subject=KnowledgeSubject(
+                kind="operations",
+                identifier="server_maintenance",
+            ),
+            summary="The infrastructure team is working on server maintenance.",
+        )
+    )
+
+    agent = KnowledgeAgent(knowledge_repository=repo)
+
+    matches = agent._find_matching_domain_knowledge(
+        "What am I working on today?"
+    )
+
+    assert matches == []
+
+
+def test_domain_knowledge_lookup_matches_specific_project_terms():
+    repo = InMemoryKnowledgeRepository()
+    repo.save(
+        KnowledgeCandidate(
+            subject=KnowledgeSubject(
+                kind="project",
+                identifier="publishing_calendar",
+            ),
+            summary="The team is working on the publishing calendar.",
+        )
+    )
+    repo.save(
+        KnowledgeCandidate(
+            subject=KnowledgeSubject(
+                kind="operations",
+                identifier="server_maintenance",
+            ),
+            summary="The infrastructure team is working on server maintenance.",
+        )
+    )
+
+    agent = KnowledgeAgent(knowledge_repository=repo)
+
+    matches = agent._find_matching_domain_knowledge(
+        "Tell me about the publishing calendar project."
+    )
+
+    assert [candidate.subject.identifier for candidate in matches] == [
+        "publishing_calendar"
+    ]

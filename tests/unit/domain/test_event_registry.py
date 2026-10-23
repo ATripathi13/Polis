@@ -1,15 +1,15 @@
-from domain.common.event import DomainEvent
+﻿from domain.common.event import DomainEvent
 from domain.events import (
     DomainEventHandler,
     EventRegistry,
 )
 
 
-class TestEvent(DomainEvent):
+class SampleEvent(DomainEvent):
     pass
 
 
-class TestHandler(DomainEventHandler):
+class SampleHandler(DomainEventHandler):
 
     def handle(
         self,
@@ -22,15 +22,15 @@ def test_register_handler():
 
     registry = EventRegistry()
 
-    handler = TestHandler()
+    handler = SampleHandler()
 
     registry.register(
-        TestEvent,
+        SampleEvent,
         handler,
     )
 
     handlers = registry.get_handlers(
-        TestEvent,
+        SampleEvent,
     )
 
     assert len(handlers) == 1

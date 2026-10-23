@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, time, timedelta, timezone
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from domain.reasoning.value_objects import (
@@ -93,8 +94,18 @@ class SimpleReasoningService(
 
         normalized = question_text.lower().strip()
 
-        # Ignore relative-date words inside quoted message text.
-        unquoted = re.sub(r"""["'][^"']*["']""", " ", normalized)
+        # Strip quoted search terms and exact-phrase expressions when detecting relative date intents
+        # so that words like 'today' inside quotes/search text do not trigger current-day filter.
+        unquoted = re.sub(
+            r'["“][^"”]*["”]|(?<!\w)[\'‘][^\'’]*[\'’](?!\w)',
+            '',
+            normalized,
+        )
+        unquoted = re.sub(
+            r'\b(?:search\s+(?:the\s+)?)?exact\s+phrase\s*:\s*.*$',
+            '',
+            unquoted,
+        )
 
         if re.search(r"\btoday\b", unquoted):
             return cls._date_window(now.date())
@@ -105,19 +116,26 @@ class SimpleReasoningService(
             )
 
         explicit_date_patterns = (
-            r"\b(\d{1,2})(?:st|nd|rd|th)?\s+"
-            r"(january|february|march|april|may|june|july|august|"
-            r"september|october|november|december)"
-            r"(?:\s+(\d{4}))?\b",
-
-            r"\b(january|february|march|april|may|june|july|august|"
-            r"september|october|november|december)\s+"
-            r"(\d{1,2})(?:st|nd|rd|th)?"
-            r"(?:,?\s+(\d{4}))?\b",
+            (
+                r"\b(\d{1,2})(?:st|nd|rd|th)?\s+"
+                r"(january|february|march|april|may|june|july|august|"
+                r"september|october|november|december)"
+                r"(?:\s+(\d{4}))?\b",
+                True,
+            ),
+            (
+                r"\b(january|february|march|april|may|june|july|august|"
+                r"september|october|november|december)\s+"
+                r"(\d{1,2})(?:st|nd|rd|th)?"
+                r"(?:,?\s+(\d{4}))?\b",
+                False,
+            ),
         )
 
-        for pattern in explicit_date_patterns:
-            match = re.search(pattern, normalized)
+        target_text = unquoted if unquoted.strip() else normalized
+
+        for pattern, day_first in explicit_date_patterns:
+            match = re.search(pattern, target_text)
 
             if not match:
                 continue
@@ -137,16 +155,16 @@ class SimpleReasoningService(
                 "december": 12,
             }
 
-            first, second, explicit_year = match.groups()
-
-            if first.isdigit():
-                day = int(first)
-                month = month_names[second]
+            if day_first:
+                day_str, month_str, year_str = match.groups()
+                day = int(day_str)
+                month = month_names[month_str]
             else:
-                month = month_names[first]
-                day = int(second)
+                month_str, day_str, year_str = match.groups()
+                month = month_names[month_str]
+                day = int(day_str)
 
-            year = int(explicit_year) if explicit_year else now.year
+            year = int(year_str) if year_str else now.year
 
             try:
                 target_date = date(
@@ -180,21 +198,28 @@ class SimpleReasoningService(
         the identity filtering.
         """
 
-        query = question.text
+        # If quoted search text is present, extract it as the core retrieval query.
+        quoted_matches = re.findall(
+            r'["“]([^"”]+)["”]|(?<!\w)[\'‘]([^\'’]+)[\'’](?!\w)',
+            question.text,
+        )
+        if quoted_matches:
+            quoted_phrases = [
+                m[0] or m[1] for m in quoted_matches if (m[0] or m[1]).strip()
+            ]
+            if quoted_phrases:
+                return " ".join(p.strip() for p in quoted_phrases)
 
-        # For explicit phrase searches, retrieve the message text itself.
-        exact_phrase = re.search(
-            r"""(?:search|find|look up)\s+(?:for\s+)?(?:the\s+)?exact phrase\s+["']([^"']+)["']""",
-            query,
+        # Also support unquoted 'search the exact phrase: ...' or 'exact phrase: ...'
+        exact_match = re.search(
+            r'\b(?:search\s+(?:the\s+)?)?exact\s+phrase\s*:\s*(.+)$',
+            question.text,
             flags=re.IGNORECASE,
         )
-        quoted_phrase = re.search(r"""["']([^"']+)["']""", query)
+        if exact_match:
+            return exact_match.group(1).strip()
 
-        if exact_phrase:
-            query = exact_phrase.group(1)
-        elif quoted_phrase:
-            query = quoted_phrase.group(1)
-
+        query = question.text
         # Remove explicit Slack user mentions because
         # actor_id already performs the identity filtering.
         query = re.sub(
@@ -221,7 +246,8 @@ class SimpleReasoningService(
         query = re.sub(
             r"\b\d{1,2}(?:st|nd|rd|th)?\s+"
             r"(?:january|february|march|april|may|june|july|august|"
-            r"september|october|november|december)\b",
+            r"september|october|november|december)"
+            r"(?:\s+\d{4})?\b",
             "",
             query,
             flags=re.IGNORECASE,
@@ -230,7 +256,8 @@ class SimpleReasoningService(
         query = re.sub(
             r"\b(?:january|february|march|april|may|june|july|august|"
             r"september|october|november|december)\s+"
-            r"\d{1,2}(?:st|nd|rd|th)?\b",
+            r"\d{1,2}(?:st|nd|rd|th)?"
+            r"(?:,?\s+\d{4})?\b",
             "",
             query,
             flags=re.IGNORECASE,
@@ -339,6 +366,62 @@ class SimpleReasoningService(
             "to answer that question."
         )
 
+    @classmethod
+    def _format_actor(
+        cls,
+        actor: Any,
+    ) -> str | None:
+        """
+        Format an actor's display name and stable ID for evidence grounding.
+        Handles missing or unknown actors safely without inventing identities.
+        """
+        if actor is None:
+            return None
+
+        display_name: str | None = None
+        internal_id: str | None = None
+
+        if isinstance(actor, dict):
+            name_val = actor.get("display_name")
+            if isinstance(name_val, str) and name_val.strip():
+                display_name = name_val.strip()
+
+            ident_val = actor.get("identity")
+            if isinstance(ident_val, dict):
+                id_val = ident_val.get("internal_id")
+                if isinstance(id_val, str) and id_val.strip():
+                    internal_id = id_val.strip()
+            elif hasattr(ident_val, "internal_id"):
+                id_val = getattr(ident_val, "internal_id")
+                if isinstance(id_val, str) and id_val.strip():
+                    internal_id = id_val.strip()
+        else:
+            name_val = getattr(actor, "display_name", None)
+            if isinstance(name_val, str) and name_val.strip():
+                display_name = name_val.strip()
+
+            ident_val = getattr(actor, "identity", None)
+            if ident_val is not None:
+                if isinstance(ident_val, dict):
+                    id_val = ident_val.get("internal_id")
+                    if isinstance(id_val, str) and id_val.strip():
+                        internal_id = id_val.strip()
+                else:
+                    id_val = getattr(ident_val, "internal_id", None)
+                    if isinstance(id_val, str) and id_val.strip():
+                        internal_id = id_val.strip()
+
+        if display_name and internal_id:
+            if display_name == internal_id:
+                return display_name
+            return f"{display_name} ({internal_id})"
+        elif display_name:
+            return display_name
+        elif internal_id:
+            return internal_id
+
+        return None
+
     def retrieve_evidence(
         self,
         question: Question,
@@ -402,27 +485,20 @@ class SimpleReasoningService(
                 self.TIMEZONE
             )
 
-            actor = getattr(communication, "actor", None)
-            sender_name = getattr(actor, "display_name", None) if actor else None
-            identity = getattr(actor, "identity", None) if actor else None
-            sender_id = getattr(identity, "internal_id", None) if identity else None
+            lines = [
+                f"Communication time: "
+                f"{created_at.strftime('%Y-%m-%d %H:%M:%S %Z')}"
+            ]
 
-            sender_line = ""
-            if sender_name and sender_id:
-                sender_line = f"Sender: {sender_name} ({sender_id})\n"
-            elif sender_name:
-                sender_line = f"Sender: {sender_name}\n"
-            elif sender_id:
-                sender_line = f"Sender: {sender_id}\n"
-
-            evidence.append(
-                (
-                    f"{sender_line}"
-                    f"Communication time: "
-                    f"{created_at.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
-                    f"Message: {body}"
-                )
+            sender = self._format_actor(
+                getattr(communication, "actor", None)
             )
+            if sender:
+                lines.append(f"Sender: {sender}")
+
+            lines.append(f"Message: {body}")
+
+            evidence.append("\n".join(lines))
 
         return self._deduplicate_evidence(
             evidence

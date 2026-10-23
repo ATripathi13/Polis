@@ -779,3 +779,28 @@ def test_operational_evidence_and_ask(agent, repo):
     assert ans["question"] == "What is the audit task?"
     assert len(ans["evidence"]) > 0
     assert ans["summary"]["open_task_count"] >= 1
+
+
+def test_task_created_normalizes_identifier_correlation_id(agent, repo):
+    correlation = Identifier(business_id="calendar-event-123")
+    event = _make_event(
+        OrganizationEventType.TASK_CREATED,
+        "Review the calendar integration",
+    )
+
+    result = agent.process_event(
+        event,
+        source_type="slack",
+        source_event_id="evt-identifier-correlation",
+        correlation_id=correlation,
+    )
+
+    assert result.operation == "created"
+    assert result.item is not None
+    assert result.item.metadata["correlation_id"] == "calendar-event-123"
+    assert isinstance(result.item.metadata["correlation_id"], str)
+
+    saved = repo.find_by_id(result.affected_item_id)
+    assert saved is not None
+    assert saved.metadata["correlation_id"] == "calendar-event-123"
+    assert isinstance(saved.metadata["correlation_id"], str)
