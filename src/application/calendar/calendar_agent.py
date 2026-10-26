@@ -203,6 +203,11 @@ class CalendarAgent:
             text,
         ):
             return True
+        if re.search(
+            r"\b(?:add|create|schedule)\s+(?:a\s+)?(?:company\s+)?calendar\s+entry\b",
+            text,
+        ):
+            return True
         if re.search(r"\b(?:set|schedule)\s+(?:a\s+|an\s+)?holiday\b", text):
             return True
         if re.search(r"\bpost\s+announcement\b", text):
@@ -245,7 +250,7 @@ class CalendarAgent:
             )
 
         # Extract optional description
-        desc_match = re.search(r"\b(?:details|description|note|notes)\s*:\s*(.+)$", text, re.IGNORECASE)
+        desc_match = re.search(r"(?im)^\s*[-*•]?\s*(?:details|description|note|notes)\s*:\s*(.+?)\s*$", text)
         description = desc_match.group(1).strip() if desc_match else ""
 
         try:
@@ -451,6 +456,14 @@ class CalendarAgent:
 
     def _extract_title(self, text: str) -> str | None:
         """Extract title from message."""
+        # Support structured Slack requests with a dedicated Title field.
+        field_match = re.search(
+            r"(?im)^\s*[-*•]?\s*Title\s*:\s*(.+?)\s*$",
+            text,
+        )
+        if field_match:
+            return field_match.group(1).strip()
+
         # Check quoted strings: "Title" or 'Title'
         quotes = re.findall(r'["\']([^"\']+)["\']', text)
         if quotes:
@@ -476,34 +489,66 @@ class CalendarAgent:
         return None
 
     def _extract_datetime(self, text: str) -> datetime | None:
-        """Extract timezone-aware start datetime from text."""
-        # Try ISO format: YYYY-MM-DD HH:MM
-        iso_match = re.search(r"\b(\d{4}-\d{2}-\d{2})(?:[T\s](\d{2}:\d{2}(?::\d{2})?))?\b", text)
+        """Extract a timezone-aware start datetime from ISO or written dates."""
         tz = ZoneInfo(self._default_timezone)
 
-        if iso_match:
-            d_str = iso_match.group(1)
-            t_str = iso_match.group(2) or "09:00"
+        # Support dates such as "24 November 2026" with times such as "9:00 AM IST".
+        written_date = re.search(
+            r"(?i)\b(\d{1,2})\s+"
+            r"(January|February|March|April|May|June|July|August|September|October|November|December)"
+            r"\s+(\d{4})\b",
+            text,
+        )
+        if written_date:
             try:
-                parsed_date = date.fromisoformat(d_str)
-                parts = [int(p) for p in t_str.split(":")]
-                parsed_time = time(parts[0], parts[1])
+                parsed_date = datetime.strptime(
+                    " ".join(written_date.groups()), "%d %B %Y"
+                ).date()
+                time_match = re.search(
+                    r"(?i)\b(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\b",
+                    text,
+                )
+                if time_match:
+                    hour = int(time_match.group(1)) % 12
+                    if time_match.group(3).upper() == "PM":
+                        hour += 12
+                    minute = int(time_match.group(2) or "0")
+                    parsed_time = time(hour, minute)
+                else:
+                    parsed_time = time(9, 0)
                 return datetime.combine(parsed_date, parsed_time, tzinfo=tz)
-            except Exception:
+            except ValueError:
                 pass
 
-        # Check relative dates: 'tomorrow at 10am', 'today at 3pm'
+        # Support ISO dates with optional 24-hour times.
+        iso_match = re.search(
+            r"\b(\d{4}-\d{2}-\d{2})(?:[T\s](\d{2}:\d{2}(?::\d{2})?))?\b",
+            text,
+        )
+        if iso_match:
+            try:
+                parsed_date = date.fromisoformat(iso_match.group(1))
+                time_text = iso_match.group(2) or "09:00"
+                parts = [int(part) for part in time_text.split(":")]
+                parsed_time = time(parts[0], parts[1])
+                return datetime.combine(parsed_date, parsed_time, tzinfo=tz)
+            except ValueError:
+                pass
+
+        # Support relative dates such as "tomorrow at 10am" and "today at 3pm".
         now = datetime.now(tz)
         lower = text.lower()
         target_date: date | None = None
-        if "tomorrow" in lower:
+        if re.search(r"\btomorrow\b", lower):
             target_date = now.date() + timedelta(days=1)
-        elif "today" in lower:
+        elif re.search(r"\btoday\b", lower):
             target_date = now.date()
 
         if target_date is not None:
-            # Look for time pattern
-            time_match = re.search(r"\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", lower)
+            time_match = re.search(
+                r"\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b",
+                lower,
+            )
             if time_match:
                 hour = int(time_match.group(1))
                 minute = int(time_match.group(2) or 0)
@@ -512,8 +557,12 @@ class CalendarAgent:
                     hour += 12
                 elif ampm == "am" and hour == 12:
                     hour = 0
-                return datetime.combine(target_date, time(hour, minute), tzinfo=tz)
-            # Default time: 09:00
+                try:
+                    return datetime.combine(
+                        target_date, time(hour, minute), tzinfo=tz
+                    )
+                except ValueError:
+                    return None
             return datetime.combine(target_date, time(9, 0), tzinfo=tz)
 
         return None

@@ -1,6 +1,7 @@
 import asyncio
 
 from infrastructure.config.settings import get_settings
+from infrastructure.logging import configure_logging
 from api.dependencies import (
     get_slack_service,
     get_activity_processor,
@@ -11,6 +12,7 @@ from connectors.slack.socket.listener import SlackSocketListener
 
 
 async def main():
+    configure_logging()
     settings = get_settings()
     application = bootstrap()
 
@@ -21,6 +23,7 @@ async def main():
         get_activity_processor(),
         get_knowledge_base_ingestion_service(),
         reminder_service=application.reminder_service,
+        calendar_agent=application.calendar_agent,
     )
 
     await listener.start()

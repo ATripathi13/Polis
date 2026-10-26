@@ -67,7 +67,8 @@ def test_bootstrap_calendar_wiring():
          patch("application.bootstrap.bootstrap.PostgreSQLKnowledgeBaseChunkRepository"), \
          patch("application.bootstrap.bootstrap.MinIOKnowledgeBaseStorage"), \
          patch("application.bootstrap.bootstrap.SlackClient") as mock_slack_cls, \
-         patch("application.bootstrap.bootstrap.SlackIdentityService") as mock_identity_cls:
+         patch("application.bootstrap.bootstrap.SlackIdentityService") as mock_identity_cls, \
+         patch("application.bootstrap.bootstrap.MicrosoftGraphTokenProvider"):
 
         mock_repo = MagicMock(spec=CalendarRepository)
         mock_repo_cls.return_value = mock_repo

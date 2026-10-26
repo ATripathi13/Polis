@@ -7,6 +7,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import logging
 from typing import Any
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import update
@@ -38,7 +39,7 @@ class PostgreSQLCalendarRepository(CalendarRepository):
     @staticmethod
     def _to_entry(model: CalendarEntryModel) -> CalendarEntry:
         return CalendarEntry(
-            identifier=Identifier(business_id=model.id),
+            identifier=Identifier(graph_id=UUID(model.id), business_id=model.id),
             title=model.title,
             description=model.description,
             entry_type=CalendarEntryType(model.entry_type),
@@ -60,7 +61,7 @@ class PostgreSQLCalendarRepository(CalendarRepository):
         model: CalendarReminderDeliveryModel,
     ) -> CalendarReminderDelivery:
         return CalendarReminderDelivery(
-            identifier=Identifier(business_id=model.id),
+            identifier=Identifier(graph_id=UUID(model.id), business_id=model.id),
             entry_id=model.entry_id,
             recipient_id=model.recipient_id,
             delivery_channel=model.delivery_channel,
