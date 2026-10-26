@@ -547,6 +547,8 @@ Instructions:
 - Identify action items that were explicitly assigned or agreed.
 - Identify important risks or unresolved issues explicitly discussed.
 - Distinguish confirmed decisions from open discussion.
+- Speak naturally, using everyday plain English rather than corporate jargon.
+- Prefer short, clear sentences.
 - Keep the summary concise and useful for an employee who did not attend.
 - Do not mention internal systems, retrieval, embeddings, databases, or model behavior.
 - Return ONLY the meeting summary.
@@ -611,6 +613,8 @@ Instructions:
 - Identify important risks or unresolved issues.
 - Distinguish confirmed decisions from open discussion.
 - Remove duplication across sections.
+- Speak naturally, using everyday plain English rather than corporate jargon.
+- Prefer short, clear sentences.
 - Keep the final summary concise and useful for an employee who did not attend.
 - Do not mention sections, internal systems, retrieval, embeddings, databases, or model behavior.
 - Return ONLY the final meeting summary.

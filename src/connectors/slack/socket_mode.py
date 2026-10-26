@@ -248,7 +248,7 @@ class SlackSocketMode:
 
                 say(
                     text=(
-                        f"Reminder created. "
+                        f"Done! I've set a reminder. "
                         f"I'll remind <@{target_user_id}> "
                         f"twice daily about: {reminder.task}"
                     ),

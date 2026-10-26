@@ -688,8 +688,10 @@ class KnowledgeAgent:
                 f"Question: {query}\n\n"
                 f"Evidence:\n{context}\n\n"
                 f"Instructions:\n"
-                f"- Answer concisely and factually.\n"
-                f"- If evidence does not provide enough info, say so clearly.\n"
+                f"- Speak naturally in the first person as a helpful, thoughtful teammate (using 'I', 'I'll', 'I've', 'don't', 'can't').\n"
+                f"- Use simple, familiar everyday English instead of corporate or technical jargon.\n"
+                f"- Answer concisely and directly without unnecessary introductions or repetitive greetings.\n"
+                f"- If evidence does not provide enough information to answer confidently, clearly say so in plain first person.\n"
                 f"- Do not assume or hallucinate."
             )
             try:
@@ -713,7 +715,7 @@ class KnowledgeAgent:
             )
 
         return Answer(
-            text="POLIS does not have enough information to answer that question.",
+            text="I don't have enough information to answer that question.",
             confidence=0.0,
             evidence=[],
         )

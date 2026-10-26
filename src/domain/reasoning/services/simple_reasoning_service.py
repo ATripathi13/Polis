@@ -9,6 +9,9 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from domain.reasoning.communication_style import (
+    NO_INFORMATION_RESPONSE,
+)
 from domain.reasoning.value_objects import (
     Answer,
     Question,
@@ -21,6 +24,7 @@ from .question_answering_service import (
 from infrastructure.llm import (
     OpenRouterClient,
 )
+
 
 
 class SimpleReasoningService(
@@ -361,10 +365,8 @@ class SimpleReasoningService(
         Return a generic no-information response.
         """
 
-        return (
-            "POLIS does not have enough information "
-            "to answer that question."
-        )
+        return NO_INFORMATION_RESPONSE
+
 
     @classmethod
     def _format_actor(
@@ -558,41 +560,27 @@ Relevant organizational knowledge:
 
 Instructions:
 - Interpret relative time expressions such as yesterday, today, tomorrow, recently, earlier, or last week using the current organizational date/time and the timestamps attached to the relevant information.
-- Answer the question directly.
-- Determine which provided information is actually relevant
-  to the user's question.
+- Speak naturally in the first person as a helpful, thoughtful teammate (using "I", "I'll", "I've", "don't", "can't").
+- Use simple, familiar everyday English instead of corporate or technical jargon.
+- Prefer short, clear sentences.
+- Answer the user's question directly without unnecessary introductions, preamble, or repetitive greetings.
+- Sound friendly, calm, confident, and professional without sounding stiff or robotic.
+- Do not overuse "I" — use it naturally, not in every sentence.
+- If technical terms are necessary, explain them in plain English.
+- Determine which provided information is actually relevant to the user's question.
 - Synthesize multiple pieces of information when necessary.
-- Information may describe people, responsibilities,
-  projects, current work, processes, or other organizational
-  context.
-- When a document name or explicit identity identifies a person,
-  use that identity when associating the information with them.
+- Information may describe people, responsibilities, projects, current work, processes, or other organizational context.
+- When a document name or explicit identity identifies a person, use that identity when associating the information with them.
 - Do not invent facts.
 - Do not assume information that is not present.
-- Distinguish general responsibilities and recurring duties
-  from specific current activities.
-- Do not treat a job responsibility, profile description,
-  expected outcome, recurring duty, or generic statement such
-  as "daily tasks" as proof that the person is doing that work
-  today.
-- For time-specific questions, only state an activity as current
-  when the provided knowledge explicitly supports that activity
-  for the requested time period.
-- When the knowledge does not establish a time-specific activity,
-  answer only that POLIS does not have enough information to
-  determine it. Do not explain what the documents or knowledge
-  contain.
-- Never mention documents, provided information, evidence,
-  sources, retrieval, embeddings, databases, memory,
-  internal systems, or model behavior.
-- Do not say phrases such as "based on the provided information",
-  "the documents say", "I found", "the available information",
-  or similar source-referencing language.
-- If the knowledge does not establish the answer, simply state
-  that POLIS does not have enough information to answer.
+- Distinguish general responsibilities and recurring duties from specific current activities.
+- Do not treat a job responsibility, profile description, expected outcome, recurring duty, or generic statement such as "daily tasks" as proof that the person is doing that work today.
+- For time-specific questions, only state an activity as current when the provided knowledge explicitly supports that activity for the requested time period.
+- When the knowledge does not establish a time-specific activity, answer that you don't have enough information to determine it. Do not explain what documents or knowledge contain.
+- If the knowledge does not contain enough information to answer confidently, clearly admit uncertainty in plain first person (e.g., "I don't have enough information to answer that confidently. Can you share a little more?").
+- Never mention documents, provided information, evidence, sources, retrieval, embeddings, databases, memory, internal systems, prompts, or model behavior.
+- Do not use stiff source-referencing language such as "based on the provided information", "the documents say", or "according to the records". Natural phrases such as "I found..." or "I don't have..." are welcome.
 - Never output safety classifications or moderation metadata.
-- Keep the answer concise and natural.
-- If the provided information is insufficient, say so clearly.
 - Return ONLY the answer.
 """.strip()
 
@@ -738,15 +726,18 @@ Relevant organizational communications:
 {context}
 
 Instructions:
-- Answer the question directly.
+- Speak naturally in the first person as a helpful, thoughtful teammate (using "I", "I'll", "I've", "don't", "can't").
+- Use simple, familiar everyday English instead of corporate or technical jargon.
+- Prefer short, clear sentences.
+- Answer the user's question directly without unnecessary introductions, preamble, or repetitive greetings.
+- Sound friendly, calm, confident, and professional without sounding stiff or robotic.
+- Do not overuse "I" — use it naturally, not in every sentence.
 - Synthesize multiple relevant communications when necessary.
 - Do not invent facts.
+- If the communications do not contain enough information to answer confidently, clearly admit uncertainty in plain first person (e.g., "I don't have enough information to answer that confidently. Can you share a little more?").
 - Never mention organizational communications, memory, retrieval, evidence, databases, sources, internal systems, safety checks, or model behavior.
 - Never output safety classifications or moderation metadata.
 - Do not output labels such as "User Safety: safe".
-- Answer naturally and directly, as POLIS already knows the relevant organizational context.
-- If the evidence does not contain enough information, say so clearly.
-- Keep the answer concise and natural.
 - Return ONLY the answer to the user's question.
 """.strip()
 
