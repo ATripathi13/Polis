@@ -361,3 +361,39 @@ def test_cognitive_evidence_includes_private_entry_for_authorized_requester(
 
     assert any("My Private One-to-One" in item for item in evidence)
     assert any("Personal discussion" in item for item in evidence)
+
+def test_handle_structured_slack_holiday_request(calendar_agent):
+    msg = (
+        "POLIS, add a company calendar entry:\n"
+        "- Title: Guru Nanak Jayanti — Fixed Paid Holiday\n"
+        "- Date: 24 November 2026\n"
+        "- Time: 9:00 AM IST\n"
+        "- Type: Holiday\n"
+        "- Audience: Whole Organization\n"
+        "- Description: Fixed paid holiday under company holiday policy.\n"
+        "Please confirm the saved date, timezone, audience, and reminder scheduling status."
+    )
+
+    response = calendar_agent.handle_message(msg, user_id="U_HR", channel_id="C_MAIN")
+
+    assert response is not None
+    assert "Successfully scheduled" in response
+
+    entries = calendar_agent.service.list_entries()
+    assert len(entries) == 1
+
+    entry = entries[0]
+    assert entry.title == "Guru Nanak Jayanti — Fixed Paid Holiday"
+    assert entry.entry_type == CalendarEntryType.HOLIDAY
+    assert entry.start_time.astimezone(ZoneInfo("Asia/Kolkata")) == datetime(
+        2026, 11, 24, 9, 0, tzinfo=ZoneInfo("Asia/Kolkata")
+    )
+    assert entry.timezone == "Asia/Kolkata"
+    assert entry.audience_type == CalendarAudienceType.ORGANIZATION
+    assert entry.audience_id == "organization"
+    assert entry.description == "Fixed paid holiday under company holiday policy."
+
+    deliveries = calendar_agent.service._repository.find_deliveries_for_entry(
+        entry.entry_id
+    )
+    assert len(deliveries) >= 1

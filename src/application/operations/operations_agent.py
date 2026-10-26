@@ -177,14 +177,24 @@ class OperationsAgent:
                     canonical_source = str(meta["source_type"]).strip()
                     break
 
-        correlation_id_str = correlation_id
-        if not correlation_id_str and event.correlation_id is not None:
-            if hasattr(event.correlation_id, "business_id") and event.correlation_id.business_id:
-                correlation_id_str = event.correlation_id.business_id
-            elif hasattr(event.correlation_id, "graph_id") and event.correlation_id.graph_id:
-                correlation_id_str = str(event.correlation_id.graph_id)
+        raw_correlation_id = correlation_id
+        if raw_correlation_id is None:
+            raw_correlation_id = event.correlation_id
+
+        correlation_id_str = None
+        if raw_correlation_id is not None:
+            if (
+                hasattr(raw_correlation_id, "business_id")
+                and raw_correlation_id.business_id
+            ):
+                correlation_id_str = str(raw_correlation_id.business_id)
+            elif (
+                hasattr(raw_correlation_id, "graph_id")
+                and raw_correlation_id.graph_id
+            ):
+                correlation_id_str = str(raw_correlation_id.graph_id)
             else:
-                correlation_id_str = str(event.correlation_id)
+                correlation_id_str = str(raw_correlation_id)
 
         item_id_hint = None
         for obs in event.observations:

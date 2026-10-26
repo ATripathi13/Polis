@@ -15,6 +15,7 @@ from slack_bolt.app.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 
 from application.activity import ActivityProcessor
+from application.calendar import CalendarAgent
 from domain.reminders.services.reminder_service import ReminderService
 
 from connectors.slack.models import (
@@ -67,6 +68,7 @@ class SlackSocketListener:
         activity_processor: ActivityProcessor,
         knowledge_base_ingestion_service: KnowledgeBaseIngestionService | None = None,
         reminder_service: ReminderService | None = None,
+        calendar_agent: CalendarAgent | None = None,
     ) -> None:
         self._slack_service = slack_service
         self._activity_processor = activity_processor
@@ -74,6 +76,7 @@ class SlackSocketListener:
             knowledge_base_ingestion_service
         )
         self._reminder_service = reminder_service
+        self._calendar_agent = calendar_agent
         self._identity_service = SlackIdentityService()
 
         os.environ.pop("SLACK_CLIENT_ID", None)
@@ -422,7 +425,6 @@ class SlackSocketListener:
 
                 return
             clean_text = text.replace(mention_token, "").strip()
-
             # ======================================================
             # Reminder commands.
             #
@@ -508,6 +510,43 @@ class SlackSocketListener:
                             f"I'll remind <@{target_user_id}> twice daily "
                             f"about: {task}"
                         ),
+                    )
+                    return
+
+            # Handle calendar commands deterministically before the
+            # general-purpose intent router.
+            if self._calendar_agent is not None:
+                try:
+                    title_field_present = bool(
+                        re.search(r"(?im)^\s*[-*•]?\s*Title\s*:", clean_text)
+                    )
+                    extracted_title_present = bool(
+                        self._calendar_agent._extract_title(clean_text)
+                    )
+                    calendar_response = self._calendar_agent.handle_message(
+                        clean_text,
+                        user_id=user_id,
+                        channel_id=channel_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Calendar agent failed to handle Slack message",
+                        extra={
+                            "channel_id": channel_id,
+                            "user_id": user_id,
+                            "message_ts": ts,
+                        },
+                    )
+                    calendar_response = (
+                        "I couldn't process that calendar request. "
+                        "Please try again."
+                    )
+
+                if calendar_response is not None:
+                    self._responder.reply(
+                        channel=channel_id,
+                        thread_ts=thread_ts or ts,
+                        text=calendar_response,
                     )
                     return
 
