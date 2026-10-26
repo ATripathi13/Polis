@@ -1,4 +1,4 @@
-"""
+﻿"""
 Simple organizational reasoning service.
 """
 
@@ -10,6 +10,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from domain.reasoning.communication_style import (
+    COMMUNICATION_STYLE_PROMPT_INSTRUCTIONS,
     NO_INFORMATION_RESPONSE,
 )
 from domain.reasoning.value_objects import (
@@ -558,7 +559,14 @@ Current organizational date and time:
 Relevant organizational knowledge:
 {context}
 
-Instructions:
+Shared communication style:
+{COMMUNICATION_STYLE_PROMPT_INSTRUCTIONS}
+
+Additional instructions:
+- For greetings, broad capability questions, and casual requests, answer in 2-4 short sentences.
+- Never respond to a simple question with a catalogue of every capability, project, task, or tool.
+- For ambiguous follow-up requests, ask one concise clarifying question instead of listing unrelated pending work.
+- For status questions, summarize only the most relevant current work, blockers, and next steps supported by the evidence.
 - Interpret relative time expressions such as yesterday, today, tomorrow, recently, earlier, or last week using the current organizational date/time and the timestamps attached to the relevant information.
 - Speak naturally in the first person as a helpful, thoughtful teammate (using "I", "I'll", "I've", "don't", "can't").
 - Use simple, familiar everyday English instead of corporate or technical jargon.
@@ -725,7 +733,14 @@ User question:
 Relevant organizational communications:
 {context}
 
-Instructions:
+Shared communication style:
+{COMMUNICATION_STYLE_PROMPT_INSTRUCTIONS}
+
+Additional instructions:
+- For greetings, broad capability questions, and casual requests, answer in 2-4 short sentences.
+- Never respond to a simple question with a catalogue of every capability, project, task, or tool.
+- For ambiguous follow-up requests, ask one concise clarifying question instead of listing unrelated pending work.
+- For status questions, summarize only the most relevant current work, blockers, and next steps supported by the evidence.
 - Speak naturally in the first person as a helpful, thoughtful teammate (using "I", "I'll", "I've", "don't", "can't").
 - Use simple, familiar everyday English instead of corporate or technical jargon.
 - Prefer short, clear sentences.
