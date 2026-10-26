@@ -506,7 +506,7 @@ class SlackSocketListener:
                         channel=channel_id,
                         thread_ts=thread_ts or ts,
                         text=(
-                            "Reminder created. "
+                            "Done! I've set a reminder. "
                             f"I'll remind <@{target_user_id}> twice daily "
                             f"about: {task}"
                         ),

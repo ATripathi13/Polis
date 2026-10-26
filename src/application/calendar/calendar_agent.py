@@ -272,6 +272,7 @@ class CalendarAgent:
             due_str = due_time.strftime("%Y-%m-%d %I:%M %p")
 
             return (
+                f"Done! I've added it to the calendar.\n\n"
                 f"✅ Successfully scheduled *{entry.entry_type.value.capitalize()}*:\n"
                 f"• *Title:* {entry.title}\n"
                 f"• *ID:* `{entry.entry_id}`\n"
@@ -281,10 +282,10 @@ class CalendarAgent:
             )
 
         except CalendarDomainError as err:
-            return f"⚠️ Could not create calendar entry: {str(err)}"
+            return f"⚠️ I couldn't create that calendar entry: {str(err)}"
         except Exception:
             logger.exception("Unexpected error creating calendar entry")
-            return "⚠️ An error occurred while creating the calendar entry."
+            return "⚠️ I ran into an error while creating the calendar entry. Please try again."
 
     def _handle_list(self, lower: str, *, user_id: str) -> str:
         """List upcoming entries visible to the user."""
@@ -309,7 +310,7 @@ class CalendarAgent:
         visible = [e for e in entries if e.is_visible_to(user_id)]
         if not visible:
             label = f"{filter_type.value}s" if filter_type else "entries"
-            return f"There are no scheduled upcoming {label} on the calendar."
+            return f"I didn't find any scheduled upcoming {label} on the calendar."
 
         lines = ["📅 *Upcoming Calendar Entries:*"]
         for entry in visible:
@@ -331,33 +332,34 @@ class CalendarAgent:
         """Cancel a calendar entry by ID or title match."""
         entry = self._find_entry_by_ref(target_ref, user_id=user_id)
         if entry is None:
-            return f"Could not find an active calendar entry matching '{target_ref}'."
+            return f"I couldn't find an active calendar entry matching '{target_ref}'."
 
         try:
             self._service.cancel_entry(entry.entry_id, requester_id=user_id)
             return (
+                f"Done! I've cancelled it.\n\n"
                 f"🚫 Successfully cancelled *{entry.title}* (`{entry.entry_id}`). "
                 "Any pending reminders have been cancelled."
             )
         except UnauthorizedCalendarActionError:
-            return "You are not authorized to cancel this calendar entry. Only the creator can cancel it."
+            return "I can't cancel this calendar entry because you are not authorized. Only the creator can cancel it."
         except CalendarDomainError as err:
-            return f"⚠️ Could not cancel entry: {str(err)}"
+            return f"⚠️ I couldn't cancel that entry: {str(err)}"
 
     def _handle_reminder_status(self, target_ref: str, *, user_id: str) -> str:
         """Inspect reminder status for an entry."""
         entry = self._find_entry_by_ref(target_ref, user_id=user_id)
         if entry is None:
-            return f"Could not find a calendar entry matching '{target_ref}'."
+            return f"I couldn't find a calendar entry matching '{target_ref}'."
         if entry.creator_id != user_id:
-            return "You are not authorized to view reminder delivery details for this entry."
+            return "I can't show reminder delivery details for this entry because you are not authorized. Only the creator can view them."
 
         deliveries = self._service.get_reminder_status(
             entry.entry_id,
             requester_id=user_id,
         )
         if not deliveries:
-            return f"No reminders configured for entry *{entry.title}* (`{entry.entry_id}`)."
+            return f"I didn't find any reminders configured for entry *{entry.title}* (`{entry.entry_id}`)."
 
         lines = [f"🔔 *Reminder Delivery Status for '{entry.title}' (`{entry.entry_id}`):*"]
         for d in deliveries:
@@ -391,11 +393,11 @@ class CalendarAgent:
         target_ref = target_ref_match.group(1).strip()
         entry = self._find_entry_by_ref(target_ref, user_id=user_id)
         if entry is None:
-            return f"Could not find an entry matching '{target_ref}'."
+            return f"I couldn't find an entry matching '{target_ref}'."
 
         new_dt = self._extract_datetime(text)
         if new_dt is None:
-            return f"Found entry '{entry.title}'. What is the new scheduled date and time?"
+            return f"I found entry '{entry.title}'. What is the new scheduled date and time?"
 
         try:
             updated = self._service.update_entry(
@@ -409,15 +411,16 @@ class CalendarAgent:
             due_str = due_time.strftime("%Y-%m-%d %I:%M %p")
 
             return (
+                f"Done! I've updated the calendar.\n\n"
                 f"🔄 Successfully rescheduled *{updated.title}* (`{updated.entry_id}`):\n"
                 f"• *New Start:* {start_str} ({updated.timezone})\n"
                 f"• *New Reminder Due:* {due_str} ({updated.timezone})\n"
                 f"• *Version:* {updated.version} (prior pending reminders were cancelled and recalculated)."
             )
         except UnauthorizedCalendarActionError:
-            return "You are not authorized to update this calendar entry. Only the creator can update it."
+            return "I can't update this calendar entry because you are not authorized. Only the creator can update it."
         except CalendarDomainError as err:
-            return f"⚠️ Could not update entry: {str(err)}"
+            return f"⚠️ I couldn't update that entry: {str(err)}"
 
     # =========================================================================
     # EXTRACTION & RESOLUTION HELPERS
