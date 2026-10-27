@@ -96,6 +96,13 @@ def test_simple_reasoning_prompts_request_first_person_and_plain_language():
     # Source-referencing instruction permits natural "I found"
     assert '"I found..." or "I don\'t have..." are welcome' in prompt
 
+    # Broad questions, status requests, and ambiguous follow-ups stay focused.
+    assert 'give a brief overview of 2-3 relevant things' in prompt
+    assert 'For status questions, lead with the most relevant current status' in prompt
+    assert 'ask one short clarifying question about which task the user means' in prompt
+    assert "Do not enumerate every capability, integration," in prompt
+    assert "project, tool, or feature." in prompt
+
 
 def test_simple_reasoning_answer_prompt_requests_first_person():
     """Verify SimpleReasoningService.answer prompt includes first-person instructions."""
