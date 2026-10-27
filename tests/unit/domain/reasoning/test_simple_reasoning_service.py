@@ -1,4 +1,4 @@
-from engines.communication.domain.aggregates import (
+﻿from engines.communication.domain.aggregates import (
     CommunicationEvent,
 )
 from engines.communication.domain.enums import (
@@ -265,7 +265,8 @@ def test_sender_aware_evidence_regression_c():
         Question(text='Search the exact phrase "Publishing Calendar"')
     )
     assert len(ev1) == 1
-    assert "Sender: AgenT (U0BB8T4BVEK)" in ev1[0]
+    assert "Sender: AgenT" in ev1[0]
+    assert "U0BB8T4BVEK" not in ev1[0]
     assert "Message: I am working on Publishing Calendar today - TEST 123" in ev1[0]
     assert "Communication time: 2026-09-18 13:17:50 IST" in ev1[0]
 
@@ -333,11 +334,13 @@ def test_named_person_grounding_regression_d():
 
     evidence = service.retrieve_evidence(q)
     assert len(evidence) == 1
-    assert "Sender: AgenT (U0BB8T4BVEK)" in evidence[0]
+    assert "Sender: AgenT" in evidence[0]
+    assert "U0BB8T4BVEK" not in evidence[0]
 
     answer = service.answer_from_evidence(q, evidence)
     assert fake_llm.last_prompt is not None
-    assert "Sender: AgenT (U0BB8T4BVEK)" in fake_llm.last_prompt
+    assert "Sender: AgenT" in fake_llm.last_prompt
+    assert "U0BB8T4BVEK" not in fake_llm.last_prompt
     assert "I am working on Publishing Calendar today - TEST 123" in fake_llm.last_prompt
     assert answer.text == "AgenT was working on Publishing Calendar."
 

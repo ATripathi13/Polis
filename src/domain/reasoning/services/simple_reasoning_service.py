@@ -414,13 +414,9 @@ class SimpleReasoningService(
                     if isinstance(id_val, str) and id_val.strip():
                         internal_id = id_val.strip()
 
-        if display_name and internal_id:
-            if display_name == internal_id:
-                return display_name
-            return f"{display_name} ({internal_id})"
-        elif display_name:
+        if display_name:
             return display_name
-        elif internal_id:
+        if internal_id:
             return internal_id
 
         return None
