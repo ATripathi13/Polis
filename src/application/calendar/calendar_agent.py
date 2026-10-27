@@ -25,6 +25,7 @@ from domain.calendar.exceptions import (
     InvalidTimeRangeError,
     UnauthorizedCalendarActionError,
 )
+from domain.calendar.value_objects import is_raw_slack_id as _is_raw_slack_id
 from domain.reasoning.value_objects import Question
 from application.calendar.calendar_service import CalendarService
 
@@ -44,13 +45,84 @@ class CalendarAgent:
         self,
         service: CalendarService,
         default_timezone: str = "Asia/Kolkata",
+        identity_resolver: Any = None,
     ) -> None:
         self._service = service
         self._default_timezone = default_timezone
+        self._identity_resolver = identity_resolver
 
     @property
     def service(self) -> CalendarService:
         return self._service
+
+    def _resolve_user_display_name(self, user_id: str | None) -> str | None:
+        """Resolve a user ID to a human-readable display name, returning None if unresolvable."""
+        if not user_id:
+            return None
+        cleaned_id = user_id.strip()
+        if cleaned_id.startswith("<@") and cleaned_id.endswith(">"):
+            parts = cleaned_id[2:-1].split("|", 1)
+            cleaned_id = parts[0].strip()
+
+        # 1. Try explicit identity_resolver if provided
+        if self._identity_resolver is not None:
+            if hasattr(self._identity_resolver, "get_display_name"):
+                try:
+                    name = self._identity_resolver.get_display_name(cleaned_id)
+                    if name and not _is_raw_slack_id(name) and name != cleaned_id:
+                        return name.strip()
+                except Exception:
+                    pass
+            if hasattr(self._identity_resolver, "resolve_user"):
+                try:
+                    user_data = self._identity_resolver.resolve_user(cleaned_id)
+                    if isinstance(user_data, dict) and user_data.get("id") == cleaned_id:
+                        profile = user_data.get("profile", {}) if isinstance(user_data.get("profile"), dict) else {}
+                        candidate = (
+                            user_data.get("real_name")
+                            or profile.get("display_name")
+                            or user_data.get("name")
+                        )
+                        if candidate and not _is_raw_slack_id(candidate) and candidate != cleaned_id:
+                            return candidate.strip()
+                except Exception:
+                    pass
+
+        # 2. Try through CalendarService's audience_service directory provider
+        try:
+            aud_svc = getattr(self._service, "audience_service", None)
+            provider = getattr(aud_svc, "directory_provider", None) if aud_svc else None
+            if provider and hasattr(provider, "resolve_user"):
+                user_data = provider.resolve_user(cleaned_id)
+                if isinstance(user_data, dict) and user_data.get("id") == cleaned_id:
+                    candidate = (
+                        user_data.get("real_name")
+                        or user_data.get("name")
+                    )
+                    if candidate and not _is_raw_slack_id(candidate) and candidate != cleaned_id:
+                        return candidate.strip()
+        except Exception:
+            pass
+
+        return None
+
+    def _format_audience(self, entry: CalendarEntry) -> str:
+        """Format audience for display without exposing raw internal IDs."""
+        if entry.audience_type == CalendarAudienceType.INDIVIDUAL:
+            disp_name = entry.metadata.get("audience_display_name")
+            if not disp_name or _is_raw_slack_id(disp_name):
+                disp_name = self._resolve_user_display_name(entry.audience_id)
+            if disp_name and not _is_raw_slack_id(disp_name):
+                return f"individual ({disp_name})"
+            return "individual"
+        elif entry.audience_type == CalendarAudienceType.ORGANIZATION:
+            return "organization"
+        elif entry.audience_type == CalendarAudienceType.TEAM:
+            disp_name = entry.metadata.get("audience_display_name")
+            if disp_name and not _is_raw_slack_id(disp_name) and str(disp_name).strip():
+                return f"team ({str(disp_name).strip()})"
+            return "team"
+        return entry.audience_type.value
 
     # =========================================================================
     # SPECIALIST QUESTION & EVIDENCE METHODS (POLIS COGNITIVE INTEGRATION)
@@ -106,7 +178,7 @@ class CalendarAgent:
                 f"Calendar Entry [{entry.entry_type.value.upper()}]: '{entry.title}'\n"
                 f"ID: {entry.entry_id}\n"
                 f"Scheduled Start: {start_str} ({entry.timezone})\n"
-                f"Audience Type: {entry.audience_type.value}\n"
+                f"Audience: {self._format_audience(entry)}\n"
                 f"Status: {entry.status.value}\n"
             )
             if entry.description:
@@ -277,7 +349,7 @@ class CalendarAgent:
                 f"• *Title:* {entry.title}\n"
                 f"• *ID:* `{entry.entry_id}`\n"
                 f"• *Scheduled Start:* {start_str} ({entry.timezone})\n"
-                f"• *Audience:* {entry.audience_type.value} ({entry.audience_id})\n"
+                f"• *Audience:* {self._format_audience(entry)}\n"
                 f"• *Reminder Scheduled:* {due_str} ({entry.timezone}) [exactly 15 hours before start]"
             )
 
@@ -323,7 +395,7 @@ class CalendarAgent:
 
             lines.append(
                 f"• *[{entry.entry_type.value.capitalize()}]* `{entry.entry_id}`: *{entry.title}* "
-                f"on {start_str} ({entry.timezone}) — Audience: {entry.audience_type.value}"
+                f"on {start_str} ({entry.timezone}) — Audience: {self._format_audience(entry)}"
             )
 
         return "\n".join(lines)
@@ -364,8 +436,19 @@ class CalendarAgent:
         lines = [f"🔔 *Reminder Delivery Status for '{entry.title}' (`{entry.entry_id}`):*"]
         for d in deliveries:
             status_emoji = "✅" if d.status == CalendarDeliveryStatus.SENT else ("⏳" if d.status == CalendarDeliveryStatus.PENDING else "❌")
+            recipient_label = "Recipient"
+            recipient_name: str | None = None
+            if entry.audience_type == CalendarAudienceType.INDIVIDUAL and d.recipient_id == entry.audience_id:
+                candidate = entry.metadata.get("audience_display_name")
+                if candidate and not _is_raw_slack_id(candidate):
+                    recipient_name = candidate.strip()
+            if not recipient_name:
+                recipient_name = self._resolve_user_display_name(d.recipient_id)
+            if recipient_name and not _is_raw_slack_id(recipient_name):
+                recipient_label = f"Recipient: {recipient_name}"
+
             lines.append(
-                f"• {status_emoji} Recipient: `<@{d.recipient_id}>` (via {d.delivery_channel}) — Status: *{d.status.value.upper()}* "
+                f"• {status_emoji} {recipient_label} (via {d.delivery_channel}) — Status: *{d.status.value.upper()}* "
                 f"(Due: {d.due_at.strftime('%Y-%m-%d %H:%M UTC')}, Attempts: {d.attempt_count})"
             )
         return "\n".join(lines)
@@ -375,6 +458,30 @@ class CalendarAgent:
         entry = self._find_entry_by_ref(target_ref, user_id=user_id)
         if entry is None:
             return f"Could not find a calendar entry matching '{target_ref}'."
+        if entry.audience_type == CalendarAudienceType.INDIVIDUAL:
+            disp_name = entry.metadata.get("audience_display_name")
+            if not disp_name or _is_raw_slack_id(disp_name):
+                disp_name = self._resolve_user_display_name(entry.audience_id)
+            if disp_name and not _is_raw_slack_id(disp_name):
+                return (
+                    f"Entry *{entry.title}* (`{entry.entry_id}`) is intended for *{disp_name}* (individual)."
+                )
+            return (
+                f"Entry *{entry.title}* (`{entry.entry_id}`) is intended for an individual recipient."
+            )
+        elif entry.audience_type == CalendarAudienceType.TEAM:
+            disp_name = entry.metadata.get("audience_display_name")
+            if disp_name and not _is_raw_slack_id(disp_name) and str(disp_name).strip():
+                return (
+                    f"Entry *{entry.title}* (`{entry.entry_id}`) is intended for the *{str(disp_name).strip()}* team."
+                )
+            return (
+                f"Entry *{entry.title}* (`{entry.entry_id}`) is intended for a team."
+            )
+        elif entry.audience_type == CalendarAudienceType.ORGANIZATION:
+            return (
+                f"Entry *{entry.title}* (`{entry.entry_id}`) is intended for the *whole organization*."
+            )
         return (
             f"Entry *{entry.title}* (`{entry.entry_id}`) is intended for: "
             f"*{entry.audience_type.value.capitalize()}*."
@@ -583,7 +690,7 @@ class CalendarAgent:
             return CalendarAudienceType.ORGANIZATION, "organization"
 
         # Mention pattern: <@U12345>
-        mention = re.search(r"<@([A-Z0-9]+)(?:\|[^>]+)?>", text)
+        mention = re.search(r"<@([A-Za-z0-9_]+)(?:\|[^>]+)?>", text)
         if mention:
             return CalendarAudienceType.INDIVIDUAL, mention.group(1)
 
@@ -597,10 +704,10 @@ class CalendarAgent:
             return CalendarAudienceType.TEAM, team_match2.group(1).strip()
 
         # Individual name pattern: for <name>
-        for_match = re.search(r"\bfor\s+([a-zA-Z0-9_\-]+)\b", lower)
+        for_match = re.search(r"\bfor\s+([a-zA-Z0-9_\-]+)\b", text)
         if for_match:
             candidate = for_match.group(1).strip()
-            if candidate not in ("the", "a", "an", "all", "our", "today", "tomorrow"):
+            if candidate.lower() not in ("the", "a", "an", "all", "our", "today", "tomorrow"):
                 return CalendarAudienceType.INDIVIDUAL, candidate
 
         # Default fallback to the creator

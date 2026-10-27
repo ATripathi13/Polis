@@ -113,9 +113,23 @@ class SlackSocketMode:
             # This preserves the existing learning pipeline.
             # ======================================================
 
+            user_name = None
+            if self._identity_service is not None:
+                try:
+                    user_name = self._identity_service.get_display_name(
+                        user_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to resolve Slack user name: %s",
+                        user_id,
+                    )
+                    user_name = None
+
             slack_event = SlackEvent(
                 user=SlackUser(
                     user_id=user_id,
+                    username=user_name,
                 ),
                 channel=SlackChannel(
                     channel_id=channel_id,

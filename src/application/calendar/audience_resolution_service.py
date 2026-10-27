@@ -9,7 +9,10 @@ from typing import Any, Protocol
 
 from domain.calendar.enums import CalendarAudienceType
 from domain.calendar.exceptions import InvalidAudienceError
-from domain.calendar.value_objects import CalendarAudience
+from domain.calendar.value_objects import (
+    CalendarAudience,
+    is_raw_slack_id as _is_raw_slack_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +56,39 @@ class SlackMembershipDirectoryProvider:
         if not identifier_or_name:
             return None
         cleaned = identifier_or_name.strip()
-        # Handle Slack mention format <@U123456>
+
+        # Handle Slack mention format <@U123456> or <@U123456|label>
+        user_id: str | None = None
         if cleaned.startswith("<@") and cleaned.endswith(">"):
-            user_id = cleaned[2:-1].split("|")[0]
-            return {"id": user_id, "name": user_id}
+            parts = cleaned[2:-1].split("|", 1)
+            user_id = parts[0].strip()
+        elif (
+            len(cleaned) >= 4
+            and cleaned[0].upper() in ("U", "W")
+            and all(c.isalnum() or c == "_" for c in cleaned[1:])
+        ):
+            user_id = cleaned.upper()
+
+        if user_id:
+            resolved_name: str | None = None
+            if self._identity_service is not None:
+                if hasattr(self._identity_service, "get_display_name"):
+                    try:
+                        candidate = self._identity_service.get_display_name(user_id)
+                        if candidate and not _is_raw_slack_id(candidate) and candidate != user_id:
+                            resolved_name = candidate.strip()
+                    except Exception:
+                        logger.warning(
+                            "Slack identity lookup failed for user ID '%s'",
+                            user_id,
+                            exc_info=True,
+                        )
+
+            return {
+                "id": user_id,
+                "name": resolved_name or "",
+                "real_name": resolved_name or "",
+            }
 
         if self._identity_service is not None:
             try:
@@ -69,14 +101,6 @@ class SlackMembershipDirectoryProvider:
                     identifier_or_name,
                     exc_info=True,
                 )
-
-        # Direct Slack ID format (e.g. U12345678, W12345678)
-        if (
-            len(cleaned) >= 8
-            and cleaned[0] in ("U", "W")
-            and cleaned[1:].isalnum()
-        ):
-            return {"id": cleaned, "name": cleaned}
 
         return None
 
@@ -129,6 +153,10 @@ class AudienceResolutionService:
         self._provider = directory_provider or SlackMembershipDirectoryProvider()
         self._org_channel = organization_channel_id.strip()
 
+    @property
+    def directory_provider(self) -> MembershipDirectoryProvider:
+        return self._provider
+
     def resolve(
         self,
         audience_type: CalendarAudienceType | str,
@@ -164,8 +192,18 @@ class AudienceResolutionService:
                     f"Cannot resolve individual recipient '{target}' against "
                     "workspace directory. Please verify username or mention."
                 )
-            name = display_name or user_data.get("real_name") or target
-            return CalendarAudience.individual(user_id=user_id, display_name=name)
+            profile = user_data.get("profile", {}) if isinstance(user_data, dict) else {}
+            candidate_name = (
+                display_name
+                or user_data.get("real_name")
+                or (profile.get("display_name") if isinstance(profile, dict) else None)
+                or (user_data.get("name") if not _is_raw_slack_id(user_data.get("name")) else None)
+                or (target if not _is_raw_slack_id(target) else "")
+            )
+            clean_name = candidate_name.strip() if isinstance(candidate_name, str) else ""
+            if _is_raw_slack_id(clean_name) or clean_name == user_id:
+                clean_name = ""
+            return CalendarAudience.individual(user_id=user_id, display_name=clean_name)
 
         if audience_type == CalendarAudienceType.TEAM:
             member_ids = tuple(

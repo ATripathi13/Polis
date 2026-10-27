@@ -470,6 +470,7 @@ def bootstrap(
     calendar_agent = CalendarAgent(
         service=calendar_service,
         default_timezone=settings.calendar_default_timezone,
+        identity_resolver=slack_identity_service,
     )
     calendar_slack_client = SlackClient()
     calendar_worker = CalendarReminderWorker(

@@ -28,6 +28,7 @@ from domain.calendar.repositories.calendar_repository import CalendarRepository
 from domain.calendar.value_objects import (
     CalendarAudience,
     CalendarReminderPolicy,
+    _is_raw_slack_id,
 )
 from application.calendar.audience_resolution_service import (
     AudienceResolutionService,
@@ -57,6 +58,10 @@ class CalendarService:
     @property
     def reminder_policy(self) -> CalendarReminderPolicy:
         return self._reminder_policy
+
+    @property
+    def audience_service(self) -> AudienceResolutionService:
+        return self._audience_service
 
     def create_entry(
         self,
@@ -93,6 +98,10 @@ class CalendarService:
             display_name=display_name,
         )
 
+        entry_metadata = dict(metadata or {})
+        if audience.display_name and not _is_raw_slack_id(audience.display_name):
+            entry_metadata["audience_display_name"] = audience.display_name
+
         # 2. Build and validate domain entity
         entry = CalendarEntry.create(
             title=title,
@@ -106,7 +115,7 @@ class CalendarService:
             audience_id=audience.audience_id,
             status=CalendarEntryStatus.SCHEDULED,
             version=1,
-            metadata=metadata or {},
+            metadata=entry_metadata,
         )
 
         # 3. Persist entry
