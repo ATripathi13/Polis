@@ -162,7 +162,7 @@ class SlackSocketListener:
             slack_event = SlackEvent(
                 user=SlackUser(
                     user_id=user_id,
-                    username=None,
+                    username=user_name,
                     email=None,
                 ),
                 channel=SlackChannel(

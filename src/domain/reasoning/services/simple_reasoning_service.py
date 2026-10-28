@@ -1,4 +1,4 @@
-﻿"""
+"""
 Simple organizational reasoning service.
 """
 
@@ -44,11 +44,13 @@ class SimpleReasoningService(
         communication_repository,
         llm_client: OpenRouterClient,
         ranker=None,
+        identity_resolver=None,
     ):
         self._ranker = ranker
         self._repository = repository
         self._communication_repository = communication_repository
         self._llm_client = llm_client
+        self._identity_resolver = identity_resolver
 
     # ==========================================================
     # DATE / TIME
@@ -369,14 +371,33 @@ class SimpleReasoningService(
         return NO_INFORMATION_RESPONSE
 
 
+    @staticmethod
+    def _is_raw_slack_id(value: str | None) -> bool:
+        """
+        Check whether a string is a raw Slack user identifier or mention
+        rather than a human-readable display name.
+        """
+        if not value:
+            return False
+        cleaned = value.strip()
+        if re.fullmatch(r"[UW][A-Z0-9]{8,12}", cleaned):
+            return True
+        if re.fullmatch(r"<@[UW][A-Z0-9]{8,12}(?:\|[^>]+)?>", cleaned):
+            return True
+        if re.fullmatch(r"user\s+[UW][A-Z0-9]{8,12}", cleaned, re.IGNORECASE):
+            return True
+        return False
+
     @classmethod
     def _format_actor(
         cls,
         actor: Any,
+        identity_resolver: Any = None,
     ) -> str | None:
         """
         Format an actor's display name and stable ID for evidence grounding.
         Handles missing or unknown actors safely without inventing identities.
+        Ensures raw Slack IDs are never presented as human-readable display names.
         """
         if actor is None:
             return None
@@ -414,11 +435,25 @@ class SimpleReasoningService(
                     if isinstance(id_val, str) and id_val.strip():
                         internal_id = id_val.strip()
 
-        if display_name:
+        # If display_name is a valid human name (not a raw Slack ID and not identical to internal ID), use it
+        if display_name and not cls._is_raw_slack_id(display_name) and display_name != internal_id:
             return display_name
-        if internal_id:
+
+        # If display_name was missing or was a raw Slack ID, attempt resolution via identity_resolver if provided
+        target_id_for_resolution = internal_id or (display_name if cls._is_raw_slack_id(display_name) else None)
+        if identity_resolver is not None and target_id_for_resolution and hasattr(identity_resolver, "get_display_name"):
+            try:
+                resolved = identity_resolver.get_display_name(target_id_for_resolution)
+                if resolved and not cls._is_raw_slack_id(resolved) and resolved != target_id_for_resolution:
+                    return resolved.strip()
+            except Exception:
+                pass
+
+        # If internal_id is available and is NOT a raw Slack user ID (e.g. non-Slack test mock or name), use it
+        if internal_id and not cls._is_raw_slack_id(internal_id):
             return internal_id
 
+        # Never treat a raw Slack ID as a human-readable display name
         return None
 
     def retrieve_evidence(
@@ -490,7 +525,8 @@ class SimpleReasoningService(
             ]
 
             sender = self._format_actor(
-                getattr(communication, "actor", None)
+                getattr(communication, "actor", None),
+                identity_resolver=self._identity_resolver,
             )
             if sender:
                 lines.append(f"Sender: {sender}")

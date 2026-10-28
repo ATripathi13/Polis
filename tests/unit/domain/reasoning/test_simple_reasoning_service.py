@@ -381,3 +381,128 @@ def test_regression_safety_e():
     s6, e6 = SimpleReasoningService._resolve_date_window("What database do we use?")
     assert s6 is None
     assert e6 is None
+
+
+def test_raw_slack_id_never_treated_as_display_name():
+    """
+    Ensure raw Slack IDs and mentions are never exposed as human-readable display names,
+    even if an actor's display_name was set to the raw ID.
+    """
+    # 1. Raw Slack user ID in display_name
+    actor_with_raw_name = {
+        "display_name": "U0BU14F6CTD",
+        "identity": {"internal_id": "U0BU14F6CTD"},
+    }
+    assert SimpleReasoningService._format_actor(actor_with_raw_name) is None
+
+    # 2. Raw Slack mention in display_name
+    actor_with_mention = {
+        "display_name": "<@U0BU14F6CTD>",
+        "identity": {"internal_id": "U0BU14F6CTD"},
+    }
+    assert SimpleReasoningService._format_actor(actor_with_mention) is None
+
+    # 3. Raw Slack ID in internal_id with missing display_name
+    actor_with_raw_id_only = {
+        "display_name": None,
+        "identity": {"internal_id": "U0BU14F6CTD"},
+    }
+    assert SimpleReasoningService._format_actor(actor_with_raw_id_only) is None
+
+    # 4. Valid human display name with raw Slack internal_id
+    actor_with_resolved_name = {
+        "display_name": "Hemant Kumar Sah",
+        "identity": {"internal_id": "U0BU14F6CTD"},
+    }
+    assert SimpleReasoningService._format_actor(actor_with_resolved_name) == "Hemant Kumar Sah"
+
+
+def test_raw_slack_id_resolved_via_identity_resolver():
+    """
+    When an identity resolver is available, raw Slack IDs are resolved to display names.
+    If resolution fails, it returns None rather than leaking the raw ID.
+    """
+    class MockIdentityResolver:
+        def get_display_name(self, user_id: str) -> str:
+            if user_id == "U0BU14F6CTD":
+                return "Hemant Kumar Sah"
+            raise RuntimeError("User not found")
+
+    resolver = MockIdentityResolver()
+
+    # Actor has raw ID in display_name and internal_id
+    actor = {
+        "display_name": "U0BU14F6CTD",
+        "identity": {"internal_id": "U0BU14F6CTD"},
+    }
+    formatted = SimpleReasoningService._format_actor(actor, identity_resolver=resolver)
+    assert formatted == "Hemant Kumar Sah"
+
+    # Actor with unresolvable raw ID
+    unresolvable_actor = {
+        "display_name": "U9999999999",
+        "identity": {"internal_id": "U9999999999"},
+    }
+    formatted_unresolved = SimpleReasoningService._format_actor(
+        unresolvable_actor, identity_resolver=resolver
+    )
+    assert formatted_unresolved is None
+
+
+def test_internal_id_filtering_preserved_while_hiding_raw_id():
+    """
+    Verify that internal IDs remain fully functional for database retrieval and filtering,
+    while evidence generation prevents the raw ID from being output as a person's name.
+    """
+    repo = InMemoryCommunicationRepository()
+    comm = CommunicationEvent.create(
+        correlation_id=Identifier(),
+        source=EventSource.SLACK,
+        source_event_id="comm-raw-id",
+        actor=Actor(
+            identity=CommunicationIdentity(internal_id="U0BU14F6CTD"),
+            display_name="U0BU14F6CTD",  # Discarded/unresolved name scenario
+        ),
+        channel=Channel(
+            identity=CommunicationIdentity(internal_id="C001"),
+            name="general",
+            channel_type="public",
+        ),
+        content=Content(body="Granted calendar access to project sync"),
+    )
+    comm.created_at = datetime(2026, 10, 27, 9, 0, 0, tzinfo=timezone.utc)
+    repo.save(comm)
+
+    # 1. Without identity resolver: internal ID filtering works, but Sender line is omitted
+    service_no_resolver = SimpleReasoningService(
+        repository=None,
+        communication_repository=repo,
+        llm_client=FakeLLM(),
+    )
+    question = Question(
+        text="calendar access",
+        target_user_id="U0BU14F6CTD",
+    )
+    evidence = service_no_resolver.retrieve_evidence(question)
+    assert len(evidence) == 1
+    assert "Granted calendar access to project sync" in evidence[0]
+    assert "Sender:" not in evidence[0]
+    assert "U0BU14F6CTD" not in evidence[0]
+
+    # 2. With identity resolver: internal ID filtering works AND display name is resolved
+    class MockIdentityResolver:
+        def get_display_name(self, user_id: str) -> str:
+            if user_id == "U0BU14F6CTD":
+                return "Hemant Kumar Sah"
+            return user_id
+
+    service_with_resolver = SimpleReasoningService(
+        repository=None,
+        communication_repository=repo,
+        llm_client=FakeLLM(),
+        identity_resolver=MockIdentityResolver(),
+    )
+    evidence_resolved = service_with_resolver.retrieve_evidence(question)
+    assert len(evidence_resolved) == 1
+    assert "Sender: Hemant Kumar Sah" in evidence_resolved[0]
+    assert "U0BU14F6CTD" not in evidence_resolved[0]

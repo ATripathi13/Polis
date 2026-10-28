@@ -19,6 +19,7 @@ from domain.calendar.exceptions import (
 from domain.calendar.value_objects import (
     CalendarAudience,
     CalendarReminderPolicy,
+    is_raw_slack_id,
 )
 from domain.calendar.entities import (
     CalendarEntry,
@@ -42,6 +43,7 @@ __all__ = [
     "UnauthorizedCalendarActionError",
     "CalendarAudience",
     "CalendarReminderPolicy",
+    "is_raw_slack_id",
     "CalendarEntry",
     "CalendarReminderDelivery",
     "CalendarRepository",
