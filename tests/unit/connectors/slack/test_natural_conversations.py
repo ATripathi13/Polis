@@ -469,11 +469,15 @@ def test_intent_router_preserves_sender_identity_and_thread_ts():
     alice_ctx = alice_ctx.add_exchange("First question", "First answer")
     repo.save(alice_ctx)
 
+    mock_identity_service = MagicMock()
+    mock_identity_service.get_workspace_users.return_value = []
+
     router = SlackIntentRouter(
         engine=mock_engine,
         responder=mock_responder,
         connector=mock_connector,
         conversation_repository=repo,
+        identity_service=mock_identity_service,
     )
 
     # Bob sends a follow-up in the thread

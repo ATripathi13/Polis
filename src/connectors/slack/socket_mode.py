@@ -395,12 +395,6 @@ class SlackSocketMode:
                                 history=conversation_context.history,
                                 channel_type=conversation_context.channel_type or ("im" if is_dm else None),
                             )
-                else:
-                    conversation_context = ConversationContext(
-                        user_id=user_id,
-                        channel_id=channel_id,
-                        thread_ts=reply_thread_ts,
-                    )
 
                 question = Question(
                     text=question_text,
@@ -462,7 +456,6 @@ class SlackSocketMode:
                 channel_id=channel_id,
                 thread_ts=thread_ts,
             )
-
             is_dm = channel_id.startswith("D")
             if context is None:
                 context = ConversationContext(
@@ -487,6 +480,7 @@ class SlackSocketMode:
                     history=context.history,
                     channel_type=context.channel_type or ("im" if is_dm else None),
                 )
+
 
             updated = context.add_exchange(
                 user_message=user_message,

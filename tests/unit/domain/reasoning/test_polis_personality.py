@@ -518,11 +518,15 @@ def test_behavior_works_through_slack_and_shared_pipeline():
     from engines.slack.router.slack_intent_router import SlackIntentRouter
     from engines.slack.dto import SlackMessage as ActivitySlackMessage
 
+    mock_identity_service = MagicMock()
+    mock_identity_service.get_workspace_users.return_value = []
+
     intent_router = SlackIntentRouter(
         engine=cognitive_engine,
         responder=mock_responder,
         connector=mock_connector,
         conversation_repository=conv_repo,
+        identity_service=mock_identity_service,
     )
 
     message = ActivitySlackMessage(

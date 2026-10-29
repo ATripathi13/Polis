@@ -48,21 +48,25 @@ class InMemoryConversationRepository(
                 continue
 
             history = ctx.history or []
-            latest_user_id = ""
-            for message in reversed(history):
-                if message.get("role") == "user":
-                    latest_user_id = message.get("user_id", "")
-                    break
-
             if user_id is not None:
-                if latest_user_id != user_id:
+                matching_user_messages = [
+                    message
+                    for message in history
+                    if message.get("role") == "user"
+                    and message.get("user_id") == user_id
+                ]
+                if not matching_user_messages:
                     continue
-                is_dm = channel_id.startswith("D") or getattr(ctx, "channel_type", None) == "im"
+
+                is_dm = (
+                    channel_id.startswith("D")
+                    or getattr(ctx, "channel_type", None) == "im"
+                )
                 if is_dm and any(
-                    m.get("role") == "user"
-                    and m.get("user_id")
-                    and m.get("user_id") != user_id
-                    for m in history
+                    message.get("role") == "user"
+                    and message.get("user_id")
+                    and message.get("user_id") != user_id
+                    for message in history
                 ):
                     continue
 

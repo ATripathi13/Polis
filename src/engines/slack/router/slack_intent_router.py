@@ -91,7 +91,7 @@ class SlackIntentRouter:
                 and hasattr(self._conversation_repository, "get_latest")
             ):
                 latest_context = self._conversation_repository.get_latest(
-                    message.channel,
+                    channel_id=message.channel,
                     user_id=message.user,
                 )
                 if latest_context is not None:
@@ -106,7 +106,11 @@ class SlackIntentRouter:
             )
         else:
             # Enforce scope ownership for private DMs
-            if is_dm and conversation_context.user_id and conversation_context.user_id != message.user:
+            if (
+                is_dm
+                and conversation_context.user_id
+                and conversation_context.user_id != message.user
+            ):
                 conversation_context = ConversationContext(
                     user_id=message.user,
                     channel_id=message.channel,

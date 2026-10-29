@@ -71,7 +71,6 @@ async def test_listener_handler_passes_resolved_name_to_ingest():
          patch("connectors.slack.socket.listener.SlackConnector"), \
          patch("connectors.slack.socket.listener.SlackClient"), \
          patch("connectors.slack.socket.listener.SlackResponder"), \
-         patch("connectors.slack.socket.listener.get_conversation_repository"), \
          patch("connectors.slack.socket.listener.SlackIntentRouter"):
 
         from connectors.slack.socket.listener import SlackSocketListener
@@ -84,6 +83,7 @@ async def test_listener_handler_passes_resolved_name_to_ingest():
             app_token="xapp-test",
             slack_service=mock_slack_service,
             activity_processor=mock_activity_processor,
+            conversation_repository=MagicMock(),
         )
 
         mock_identity = MagicMock()

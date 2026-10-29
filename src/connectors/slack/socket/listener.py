@@ -38,9 +38,6 @@ from engines.slack.services import (
     SlackIdentityService,
     SlackResponder,
 )
-from api.dependencies import (
-    get_conversation_repository,
-)
 from infrastructure.config.settings import get_settings
 
 from connectors.slack.routing import (
@@ -125,6 +122,8 @@ class SlackSocketListener:
         if conversation_repository is not None:
             self._conversation_repository = conversation_repository
         else:
+            from api.dependencies import get_conversation_repository
+
             self._conversation_repository = get_conversation_repository()
 
         if intent_router is not None:
