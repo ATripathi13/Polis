@@ -36,3 +36,36 @@ class InMemoryConversationRepository(
         ] = context
 
         return context
+
+    def get_latest(
+        self,
+        channel_id: str,
+        user_id: str | None = None,
+    ) -> ConversationContext | None:
+        contexts = list(self._conversations.values())
+        for ctx in reversed(contexts):
+            if ctx.channel_id != channel_id:
+                continue
+
+            history = ctx.history or []
+            latest_user_id = ""
+            for message in reversed(history):
+                if message.get("role") == "user":
+                    latest_user_id = message.get("user_id", "")
+                    break
+
+            if user_id is not None:
+                if latest_user_id != user_id:
+                    continue
+                is_dm = channel_id.startswith("D") or getattr(ctx, "channel_type", None) == "im"
+                if is_dm and any(
+                    m.get("role") == "user"
+                    and m.get("user_id")
+                    and m.get("user_id") != user_id
+                    for m in history
+                ):
+                    continue
+
+            return ctx
+
+        return None

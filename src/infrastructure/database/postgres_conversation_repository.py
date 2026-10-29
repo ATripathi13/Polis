@@ -45,6 +45,7 @@ class PostgreSQLConversationRepository(
                 channel_id=record.channel_id,
                 thread_ts=record.thread_ts,
                 history=history,
+                channel_type="im" if record.channel_id.startswith("D") else None,
             )
 
     def save(
@@ -84,3 +85,51 @@ class PostgreSQLConversationRepository(
             session.commit()
 
         return context
+
+    def get_latest(
+        self,
+        channel_id: str,
+        user_id: str | None = None,
+    ) -> ConversationContext | None:
+        with SessionLocal() as session:
+            records = (
+                session.query(ConversationMemoryModel)
+                .filter(
+                    ConversationMemoryModel.channel_id == channel_id,
+                )
+                .order_by(
+                    ConversationMemoryModel.updated_at.desc(),
+                )
+                .all()
+            )
+
+            for record in records:
+                history = record.history or []
+
+                latest_user_id = ""
+                for message in reversed(history):
+                    if message.get("role") == "user":
+                        latest_user_id = message.get("user_id", "")
+                        break
+
+                if user_id is not None:
+                    if latest_user_id != user_id:
+                        continue
+                    is_dm = channel_id.startswith("D")
+                    if is_dm and any(
+                        m.get("role") == "user"
+                        and m.get("user_id")
+                        and m.get("user_id") != user_id
+                        for m in history
+                    ):
+                        continue
+
+                return ConversationContext(
+                    user_id=latest_user_id,
+                    channel_id=record.channel_id,
+                    thread_ts=record.thread_ts,
+                    history=history,
+                    channel_type="im" if record.channel_id.startswith("D") else None,
+                )
+
+            return None

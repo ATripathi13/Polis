@@ -82,12 +82,46 @@ class SlackIntentRouter:
             thread_ts=thread_ts,
         )
 
+        is_dm = message.channel.startswith("D")
+
         if conversation_context is None:
+            history = []
+            if (
+                is_dm
+                and hasattr(self._conversation_repository, "get_latest")
+            ):
+                latest_context = self._conversation_repository.get_latest(
+                    message.channel,
+                    user_id=message.user,
+                )
+                if latest_context is not None:
+                    history = latest_context.history
+
             conversation_context = ConversationContext(
                 user_id=message.user,
                 channel_id=message.channel,
                 thread_ts=thread_ts,
+                history=history,
+                channel_type="im" if is_dm else None,
             )
+        else:
+            # Enforce scope ownership for private DMs
+            if is_dm and conversation_context.user_id and conversation_context.user_id != message.user:
+                conversation_context = ConversationContext(
+                    user_id=message.user,
+                    channel_id=message.channel,
+                    thread_ts=thread_ts,
+                    history=[],
+                    channel_type="im",
+                )
+            else:
+                conversation_context = ConversationContext(
+                    user_id=message.user,
+                    channel_id=message.channel,
+                    thread_ts=thread_ts,
+                    history=conversation_context.history,
+                    channel_type=conversation_context.channel_type or ("im" if is_dm else None),
+                )
 
         target_user = self._resolve_target_user(
             text=text,
@@ -116,6 +150,7 @@ class SlackIntentRouter:
         updated_context = conversation_context.add_exchange(
             user_message=text,
             assistant_message=answer.text,
+            user_id=message.user,
         )
 
         self._conversation_repository.save(

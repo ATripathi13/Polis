@@ -21,6 +21,9 @@ from domain.organization import (
     OrganizationEvent,
     OrganizationEventType,
 )
+from domain.reasoning.communication_style import (
+    COMMUNICATION_STYLE_PROMPT_INSTRUCTIONS,
+)
 from domain.reasoning.value_objects import Question, Answer
 
 logger = logging.getLogger(__name__)
@@ -683,10 +686,12 @@ class KnowledgeAgent:
         if self._llm_client is not None and evidence:
             context = "\n\n".join(evidence[:5])
             prompt = (
-                f"You are POLIS, an organizational knowledge assistant.\n"
+                f"You are POLIS, a socially intelligent, capable teammate and organizational assistant.\n"
                 f"Answer the user's question using ONLY the evidence provided below.\n\n"
                 f"Question: {query}\n\n"
                 f"Evidence:\n{context}\n\n"
+                f"Shared communication style and team personality:\n"
+                f"{COMMUNICATION_STYLE_PROMPT_INSTRUCTIONS}\n\n"
                 f"Instructions:\n"
                 f"- Speak naturally in the first person as a helpful, thoughtful teammate (using 'I', 'I'll', 'I've', 'don't', 'can't').\n"
                 f"- Use simple, familiar everyday English instead of corporate or technical jargon.\n"

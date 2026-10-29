@@ -24,6 +24,8 @@ class Answer(ValueObject):
         default_factory=list,
     )
 
+    is_conversational: bool = False
+
     def __post_init__(self) -> None:
 
         if not self.text.strip():

@@ -43,6 +43,19 @@ from api.dependencies import (
 )
 from infrastructure.config.settings import get_settings
 
+from connectors.slack.routing import (
+    EventDeduplicator,
+    clean_slack_text,
+    is_bot_mentioned,
+    is_direct_message,
+)
+from domain.reasoning.repositories import (
+    ConversationRepository,
+)
+from domain.reasoning.value_objects import (
+    ConversationContext,
+)
+
 from application.knowledge_base import (
     KnowledgeBaseIngestionService,
 )
@@ -69,6 +82,8 @@ class SlackSocketListener:
         knowledge_base_ingestion_service: KnowledgeBaseIngestionService | None = None,
         reminder_service: ReminderService | None = None,
         calendar_agent: CalendarAgent | None = None,
+        conversation_repository: ConversationRepository | None = None,
+        intent_router: SlackIntentRouter | None = None,
     ) -> None:
         self._slack_service = slack_service
         self._activity_processor = activity_processor
@@ -78,6 +93,7 @@ class SlackSocketListener:
         self._reminder_service = reminder_service
         self._calendar_agent = calendar_agent
         self._identity_service = SlackIdentityService()
+        self._deduplicator = EventDeduplicator()
 
         os.environ.pop("SLACK_CLIENT_ID", None)
         os.environ.pop("SLACK_CLIENT_SECRET", None)
@@ -106,15 +122,21 @@ class SlackSocketListener:
             self._slack_client,
         )
 
-        self._conversation_repository = get_conversation_repository()
+        if conversation_repository is not None:
+            self._conversation_repository = conversation_repository
+        else:
+            self._conversation_repository = get_conversation_repository()
 
-        self._intent_router = SlackIntentRouter(
-            engine=self._slack_service._cognitive_engine,
-            responder=self._responder,
-            connector=self._connector,
-            conversation_repository=self._conversation_repository,
-            identity_service=self._identity_service,
-        )
+        if intent_router is not None:
+            self._intent_router = intent_router
+        else:
+            self._intent_router = SlackIntentRouter(
+                engine=self._slack_service._cognitive_engine,
+                responder=self._responder,
+                connector=self._connector,
+                conversation_repository=self._conversation_repository,
+                identity_service=self._identity_service,
+            )
 
         self._register_handlers()
 
@@ -137,6 +159,22 @@ class SlackSocketListener:
             files = event.get("files", [])
 
             if not user_id or not channel_id or not ts:
+                return
+
+            settings = get_settings()
+            bot_user_id = settings.slack_bot_user_id
+
+            # Ignore messages authored by POLIS itself to prevent self-reply loops.
+            if bot_user_id and user_id == bot_user_id:
+                return
+
+            # Prevent duplicate processing of retried or multi-subscribed events.
+            if self._deduplicator.is_duplicate(channel_id, ts):
+                logger.info(
+                    "Ignoring duplicate Slack event: channel=%s, ts=%s",
+                    channel_id,
+                    ts,
+                )
                 return
 
             # ======================================================
@@ -247,18 +285,40 @@ class SlackSocketListener:
             # ======================================================
             # POLIS question handling.
             #
-            # POLIS only responds when explicitly mentioned.
-            # All Slack messages are still ingested and processed
+            # POLIS responds:
+            # 1. In 1-to-1 Direct Messages (DMs) without requiring a mention.
+            # 2. When explicitly mentioned (@POLIS or bot user id).
+            # 3. In established POLIS conversation threads without requiring repeat mentions.
+            #
+            # All other Slack messages are still ingested and processed
             # above so they remain available for organizational memory.
             # ======================================================
 
             settings = get_settings()
             bot_user_id = settings.slack_bot_user_id
 
-            mention_token = f"<@{bot_user_id}>"
-            is_polis_mentioned = mention_token in text
+            is_direct = is_direct_message(
+                event=event,
+                channel_id=channel_id,
+            )
+            is_polis_mentioned = is_bot_mentioned(
+                text=text,
+                bot_user_id=bot_user_id,
+            )
 
-            if not is_polis_mentioned:
+            is_established_thread = False
+            if thread_ts and self._conversation_repository is not None:
+                existing_context = self._conversation_repository.get(
+                    channel_id=channel_id,
+                    thread_ts=thread_ts,
+                )
+                if (
+                    existing_context is not None
+                    and any(msg.get("role") == "assistant" for msg in existing_context.history)
+                ):
+                    is_established_thread = True
+
+            if not (is_direct or is_polis_mentioned or is_established_thread):
                 logger.info(
                     "Slack message learned without POLIS response",
                     extra={
@@ -269,14 +329,20 @@ class SlackSocketListener:
                     },
                 )
                 return
+
+            clean_text = clean_slack_text(
+                text=text,
+                bot_user_id=bot_user_id,
+            )
+
             # ======================================================
             # Knowledge Base file ingestion.
             #
-            # A file is ingested only when POLIS is explicitly
-            # mentioned in the same Slack message.
+            # A file is ingested when POLIS is explicitly mentioned
+            # or in a 1-to-1 Direct Message conversation.
             # ======================================================
 
-            if files and self._knowledge_base_ingestion_service is not None:
+            if files and self._knowledge_base_ingestion_service is not None and (is_polis_mentioned or is_direct):
                 supported_mime_types = {
                     ".pdf": "application/pdf",
                     ".docx": (
@@ -368,10 +434,7 @@ class SlackSocketListener:
 
                             is_employee_profile = (
                                 "employee profile"
-                                in text.replace(
-                                    mention_token,
-                                    "",
-                                ).lower()
+                                in clean_text.lower()
                             )
 
                             document_metadata = None
@@ -424,7 +487,18 @@ class SlackSocketListener:
                         )
 
                 return
-            clean_text = text.replace(mention_token, "").strip()
+
+            if not clean_text:
+                logger.info(
+                    "Slack message has no actionable text; skipping reply",
+                    extra={
+                        "channel_id": channel_id,
+                        "user_id": user_id,
+                        "message_ts": ts,
+                    },
+                )
+                return
+
             # ======================================================
             # Reminder commands.
             #
@@ -441,13 +515,22 @@ class SlackSocketListener:
                         )
                     )
 
+                    reply_text = (
+                        f"Stopped {stopped_count} active reminder"
+                        f"{'' if stopped_count == 1 else 's'}."
+                    )
+                    reply_thread_ts = thread_ts or ts
+                    self._record_conversation_exchange(
+                        channel_id=channel_id,
+                        thread_ts=reply_thread_ts,
+                        user_id=user_id,
+                        user_message=clean_text,
+                        assistant_message=reply_text,
+                    )
                     self._responder.reply(
                         channel=channel_id,
-                        thread_ts=thread_ts or ts,
-                        text=(
-                            f"Stopped {stopped_count} active reminder"
-                            f"{'' if stopped_count == 1 else 's'}."
-                        ),
+                        thread_ts=reply_thread_ts,
+                        text=reply_text,
                     )
                     return
 
@@ -488,8 +571,6 @@ class SlackSocketListener:
                         )
                         return
 
-                    settings = get_settings()
-
                     self._reminder_service.create(
                         target_user_id=target_user_id,
                         creator_user_id=user_id,
@@ -502,14 +583,23 @@ class SlackSocketListener:
                         time_2=settings.reminder_time_2,
                     )
 
+                    reply_text = (
+                        "Done! I've set a reminder. "
+                        f"I'll remind <@{target_user_id}> twice daily "
+                        f"about: {task}"
+                    )
+                    reply_thread_ts = thread_ts or ts
+                    self._record_conversation_exchange(
+                        channel_id=channel_id,
+                        thread_ts=reply_thread_ts,
+                        user_id=user_id,
+                        user_message=clean_text,
+                        assistant_message=reply_text,
+                    )
                     self._responder.reply(
                         channel=channel_id,
-                        thread_ts=thread_ts or ts,
-                        text=(
-                            "Done! I've set a reminder. "
-                            f"I'll remind <@{target_user_id}> twice daily "
-                            f"about: {task}"
-                        ),
+                        thread_ts=reply_thread_ts,
+                        text=reply_text,
                     )
                     return
 
@@ -543,9 +633,17 @@ class SlackSocketListener:
                     )
 
                 if calendar_response is not None:
+                    reply_thread_ts = thread_ts or ts
+                    self._record_conversation_exchange(
+                        channel_id=channel_id,
+                        thread_ts=reply_thread_ts,
+                        user_id=user_id,
+                        user_message=clean_text,
+                        assistant_message=calendar_response,
+                    )
                     self._responder.reply(
                         channel=channel_id,
-                        thread_ts=thread_ts or ts,
+                        thread_ts=reply_thread_ts,
                         text=calendar_response,
                     )
                     return
@@ -567,7 +665,8 @@ class SlackSocketListener:
                 )
 
                 logger.info(
-                    "Slack intent handled for explicit POLIS mention",
+                    "Slack intent handled for message in %s",
+                    channel_id,
                     extra={
                         "channel_id": channel_id,
                         "user_id": user_id,
@@ -582,6 +681,65 @@ class SlackSocketListener:
                 )
 
             return
+
+    def _record_conversation_exchange(
+        self,
+        channel_id: str,
+        thread_ts: str,
+        user_id: str,
+        user_message: str,
+        assistant_message: str,
+    ) -> None:
+        """
+        Record a conversation exchange in the repository to establish thread state.
+        """
+        if self._conversation_repository is None:
+            return
+
+        try:
+            context = self._conversation_repository.get(
+                channel_id=channel_id,
+                thread_ts=thread_ts,
+            )
+
+            is_dm = channel_id.startswith("D")
+            if context is None:
+                context = ConversationContext(
+                    user_id=user_id,
+                    channel_id=channel_id,
+                    thread_ts=thread_ts,
+                    channel_type="im" if is_dm else None,
+                )
+            else:
+                if is_dm and context.user_id and context.user_id != user_id:
+                    logger.warning(
+                        "Cannot record exchange in private DM owned by another user: expected %s, got %s",
+                        context.user_id,
+                        user_id,
+                    )
+                    return
+
+                context = ConversationContext(
+                    user_id=context.user_id if is_dm else user_id,
+                    channel_id=channel_id,
+                    thread_ts=thread_ts,
+                    history=context.history,
+                    channel_type=context.channel_type or ("im" if is_dm else None),
+                )
+
+            updated = context.add_exchange(
+                user_message=user_message,
+                assistant_message=assistant_message,
+                user_id=user_id,
+            )
+            self._conversation_repository.save(updated)
+
+        except Exception:
+            logger.exception(
+                "Failed to record conversation exchange for thread %s",
+                thread_ts,
+            )
+
 
     def _run_reminder_worker(self) -> None:
         while True:
