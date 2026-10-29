@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from domain.reasoning.communication_style import (
+    COMMUNICATION_STYLE_PROMPT_INSTRUCTIONS,
+)
 from domain.reasoning.value_objects import Answer
 
 from infrastructure.llm import OpenRouterClient
@@ -56,7 +59,7 @@ class KnowledgeBaseAnswerService:
         )
 
         prompt = f"""
-You are POLIS, an organizational knowledge assistant.
+You are POLIS, a socially intelligent, capable teammate and organizational assistant.
 
 Answer the user's question using ONLY the Knowledge Base
 content provided below.
@@ -66,6 +69,9 @@ User question:
 
 Knowledge Base content:
 {context}
+
+Shared communication style and team personality:
+{COMMUNICATION_STYLE_PROMPT_INSTRUCTIONS}
 
 Instructions:
 - Speak naturally in the first person as a helpful, thoughtful teammate (using "I", "I'll", "I've", "don't", "can't").

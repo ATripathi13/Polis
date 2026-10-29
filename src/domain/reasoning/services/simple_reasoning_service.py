@@ -15,6 +15,7 @@ from domain.reasoning.communication_style import (
 )
 from domain.reasoning.value_objects import (
     Answer,
+    ConversationContext,
     Question,
 )
 
@@ -370,6 +371,250 @@ class SimpleReasoningService(
 
         return NO_INFORMATION_RESPONSE
 
+    @classmethod
+    def _format_conversation_history(
+        cls,
+        context: ConversationContext | None,
+        current_user_id: str | None = None,
+    ) -> str:
+        """
+        Format recent history with strict privacy and scope isolation.
+
+        In private 1-to-1 DMs:
+        - Never expose another user's question or assistant response.
+        - If ownership cannot be established safely (missing sender metadata),
+          omit the questionable messages.
+        - If the context belongs to another user, omit the history entirely.
+
+        In shared threads:
+        - Preserve legitimate multi-user continuity.
+        - Preserve the identity of each sender without misattributing messages.
+        """
+        if context is None or not context.history:
+            return ""
+
+        is_private_dm = (
+            getattr(context, "channel_type", None) == "im"
+            or (
+                isinstance(context.channel_id, str)
+                and context.channel_id.startswith("D")
+                and getattr(context, "channel_type", None) not in ("channel", "group", "mpim")
+            )
+        )
+
+        # In private DM, if the context is owned by another user, fail safe
+        if is_private_dm and context.user_id and current_user_id and context.user_id != current_user_id:
+            return ""
+
+        recent_messages = context.history[-10:]
+
+        formatted_messages: list[str] = []
+
+        for message in recent_messages:
+            role = message.get("role", "")
+            content = (message.get("content") or "").strip()
+            msg_user_id = message.get("user_id")
+
+            if not content:
+                continue
+
+            if is_private_dm:
+                # Private DM: strict user isolation
+                # If current_user_id is not known, we cannot safely verify ownership
+                if not current_user_id:
+                    continue
+
+                # If message has no sender metadata or belongs to another user, omit
+                if not msg_user_id or msg_user_id != current_user_id:
+                    continue
+
+                if role == "user":
+                    formatted_messages.append(f"User: {content}")
+                elif role == "assistant":
+                    formatted_messages.append(f"POLIS: {content}")
+            else:
+                # Shared channel / thread: multi-user continuity
+                if role == "user":
+                    if msg_user_id and current_user_id and msg_user_id == current_user_id:
+                        formatted_messages.append(f"User: {content}")
+                    elif msg_user_id:
+                        formatted_messages.append(f"User ({msg_user_id}): {content}")
+                    else:
+                        formatted_messages.append(f"User: {content}")
+                elif role == "assistant":
+                    formatted_messages.append(f"POLIS: {content}")
+
+        if not formatted_messages:
+            return ""
+
+        return (
+            "Recent conversation history for this thread:\n"
+            + "\n".join(formatted_messages)
+        )
+
+    @classmethod
+    def _is_conversational_query(
+        cls,
+        question_text: str,
+        has_history: bool = False,
+    ) -> bool:
+        """
+        Determine whether a query is a social interaction or conversational continuity
+        that does not require factual organizational documents/records.
+        """
+        if not question_text:
+            return False
+
+        text = question_text.strip().lower()
+
+        # Keep substantive questions out of the social-only fallback.
+        factual_request_patterns = (
+            r"\bwhat\b.*\b(our|the|my|project|deadline|status|policy|date|time|decision|owner|task|plan|budget|database|driver|release|meeting)\b",
+            r"\bwhen\b.*\b(launch|release|deadline|meeting|review|milestone|deployment)\b",
+            r"\b(can|could|would|will|do|does|did|is|are|was|were|has|have)\b.*\b(deadline|project|task|status|policy|decision|owner|release|meeting|database|driver|budget|plan)\b",
+        )
+        if any(re.search(pattern, text) for pattern in factual_request_patterns):
+            return False
+        words = re.findall(r"\b\w+\b", text)
+        if not words:
+            return False
+
+        # Greetings & Pleasantries
+        greetings = {
+            "hello", "hi", "hey", "hiya", "howdy", "yo", "greetings",
+            "morning", "afternoon", "evening",
+        }
+        if len(words) <= 4 and any(w in greetings for w in words):
+            return True
+
+        if any(
+            text.startswith(g) or g in text
+            for g in [
+                "good morning", "good afternoon", "good evening",
+                "how are you", "how's it going", "how is it going",
+                "what's up", "what is up", "how have you been",
+            ]
+        ):
+            return True
+
+        # Thanks & Appreciation
+        if any(
+            t in text
+            for t in [
+                "thank", "thanks", "appreciate", "grateful", "ty", "thx",
+            ]
+        ):
+            return True
+
+        # Compliments & Praise
+        compliments = [
+            "great job", "good job", "nice work", "well done", "awesome",
+            "you rock", "impressive", "impressed", "smartest", "smart bot",
+            "you're awesome", "you are awesome", "love it", "cool",
+            "super cool", "brilliant", "sharp", "really sharp", "amazing",
+            "great work", "fantastic",
+        ]
+        if any(c in text for c in compliments):
+            return True
+
+        # Farewells & Wrap-ups
+        farewells = [
+            "bye", "goodbye", "see you", "see ya", "talk later", "talk to you later",
+            "have a good one", "have a nice day", "have a good weekend",
+            "good night", "wrapping up", "calling it a day", "signing off",
+            "that's all", "that is all", "all for today", "all for now",
+            "done for today", "done for now",
+        ]
+        if any(f in text for f in farewells):
+            return True
+
+        # Casual Affirmations / Brief Acknowledgements
+        affirmations = {
+            "ok", "okay", "sure", "sounds good", "perfect", "got it",
+            "makes sense", "no problem", "cool", "alright", "right",
+        }
+        if text in affirmations or (
+            len(words) <= 4 and any(a in text for a in ["sounds good", "makes sense", "got it", "no problem", "perfect"])
+        ):
+            return True
+
+        # Workplace Frustration / Confusion / Empathy triggers
+        emotions = [
+            "frustrating", "frustrated", "frustration",
+            "confused", "confusion", "annoying", "annoyed",
+            "driving me crazy", "third time the same bug",
+            "same bug has appeared", "stuck on this", "so lost",
+        ]
+        if any(e in text for e in emotions):
+            return True
+
+        # Conversational continuity (e.g. continuing thread, next steps)
+        continuity_cues = [
+            "continue", "where we left off", "where we stopped",
+            "next step", "what should i do next", "what should we do next",
+            "what next", "what's next", "what is next", "what do we do next",
+            "what do i do next", "where do we go from here",
+            "pick it up", "pick up where", "what were we talking about",
+            "what did we just discuss", "summarize what we",
+            "as you said", "as mentioned", "what about the other",
+            "what about option", "tell me more about that",
+        ]
+        if any(c in text for c in continuity_cues):
+            return True
+
+        return False
+
+    def _build_conversational_prompt(
+        self,
+        question: Question,
+        history_text: str = "",
+        user_name: str | None = None,
+    ) -> str:
+        """
+        Build prompt for conversational messages without specific organizational document evidence.
+        """
+        current_time = datetime.now(self.TIMEZONE).strftime(
+            "%Y-%m-%d %H:%M:%S %Z"
+        )
+        user_info = (
+            f"\nUser name: {user_name} (use only when relevant and natural, not in every sentence)\n"
+            if user_name
+            else ""
+        )
+        history_block = f"\n{history_text}\n" if history_text else ""
+
+        return f"""
+You are POLIS, a socially intelligent, capable teammate and organizational assistant.
+{user_info}{history_block}
+User message:
+{question.text}
+
+Current organizational date and time:
+{current_time}
+
+Shared communication style and team personality:
+{COMMUNICATION_STYLE_PROMPT_INSTRUCTIONS}
+
+Instructions for messages without organizational document evidence:
+- If the user's message is a social message (greeting, compliment, thanks, farewell, frustration, confusion, or casual workplace conversation) or conversational continuity (discussing ongoing work or next steps in the current thread):
+  * Respond naturally as a capable, socially aware colleague according to our shared communication style.
+  * Compliments: Acknowledge the compliment warmly and naturally before anything else (e.g. "Haha, glad I could impress you!"). Leave the conversation open without sounding scripted. Avoid listing capabilities or generic "How can I assist you?".
+  * Thanks: Acknowledge proportionately (e.g. "Perfect, glad it worked!"). Do not automatically add another question or offer additional services.
+  * Frustration: Acknowledge the frustration with empathy, take the issue seriously, and move toward a useful next step without being defensive, blaming the user, or over-apologizing.
+  * Confusion: Empathize and simplify, giving a clear, concrete first step based on available context.
+  * Casual conversation: Be relaxed, approachable, and brief. Avoid formal greetings and unnecessary preamble.
+  * Farewells: Acknowledge the wrap-up warmly (e.g. "Sounds good. We'll pick it up next time.") without forcing another task or question into a conversation that is ending.
+  * Continuity: If the user says "Let's continue where we left off", use the conversation history to identify the next step. If the context is insufficient, ask a brief targeted question. Do not invent past tasks or conversations that are not in the context.
+- If the user's message is asking for specific organizational facts, documents, databases, policies, or activities that are not in the conversation history:
+  * Do not invent facts, projects, or events.
+  * Clearly and plainly state in first person that you don't have enough information to answer that (e.g. "I don't have enough information to answer that confidently. Can you share a little more?").
+- Identity and honesty rules:
+  * Do not claim to be human, and do not repeatedly announce you are an AI.
+  * Never claim to have completed actions, sent messages, or made system changes unless confirmed.
+  * Never output safety classifications or moderation metadata.
+- Return ONLY the answer.
+""".strip()
+
 
     @staticmethod
     def _is_raw_slack_id(value: str | None) -> bool:
@@ -575,10 +820,20 @@ class SimpleReasoningService(
         ).strftime(
             "%Y-%m-%d %H:%M:%S %Z"
         )
+        history_text = self._format_conversation_history(
+            question.context,
+            current_user_id=question.context.user_id if question.context else None,
+        )
+        history_block = f"\n{history_text}\n" if history_text else ""
+        user_info = (
+            f"\nUser name: {question.target_user_name} (use only when relevant and natural, not in every sentence)\n"
+            if question.target_user_name
+            else ""
+        )
 
         prompt = f"""
-You are POLIS, an organizational intelligence assistant.
-
+You are POLIS, a socially intelligent, capable teammate and organizational assistant.
+{user_info}{history_block}
 Answer the user's question using ONLY the relevant
 organizational knowledge provided below.
 
@@ -733,15 +988,51 @@ Additional instructions:
             evidence
         )
 
+        history_text = self._format_conversation_history(
+            question.context,
+            current_user_id=question.context.user_id if question.context else None,
+        )
+        history_block = f"\n{history_text}\n" if history_text else ""
+        user_info = (
+            f"\nUser name: {question.target_user_name} (use only when relevant and natural, not in every sentence)\n"
+            if question.target_user_name
+            else ""
+        )
+
         # ------------------------------------------------------
-        # NO DATA
+        # NO DATA / CONVERSATIONAL SOCIAL FALLBACK
         # ------------------------------------------------------
 
         if not evidence:
+            is_conversational = self._is_conversational_query(
+                question_text=question.text,
+                has_history=bool(history_text),
+            )
+
+            if is_conversational and self._llm_client is not None:
+                conversational_prompt = self._build_conversational_prompt(
+                    question=question,
+                    history_text=history_text,
+                    user_name=question.target_user_name,
+                )
+                try:
+                    answer_text = self._llm_client.generate(conversational_prompt)
+                except Exception:
+                    answer_text = ""
+
+                if answer_text and not self._is_invalid_llm_response(answer_text):
+                    return Answer(
+                        text=answer_text.strip(),
+                        confidence=0.0,
+                        evidence=[],
+                        is_conversational=True,
+                    )
+
             return Answer(
                 text=self._no_information_text(question),
                 confidence=0.0,
                 evidence=[],
+                is_conversational=False,
             )
 
         # ------------------------------------------------------
@@ -754,8 +1045,8 @@ Additional instructions:
         )
 
         prompt = f"""
-You are POLIS, an organizational intelligence assistant.
-
+You are POLIS, a socially intelligent, capable teammate and organizational assistant.
+{user_info}{history_block}
 Answer the user's question using ONLY the organizational
 communications provided below.
 

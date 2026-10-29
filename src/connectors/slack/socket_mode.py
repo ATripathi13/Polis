@@ -27,6 +27,15 @@ from connectors.slack.services import SlackService
 from domain.reasoning import (
     Question,
 )
+from connectors.slack.routing import (
+    EventDeduplicator,
+    clean_slack_text,
+    is_bot_mentioned,
+    is_direct_message as is_direct_channel,
+)
+from domain.reasoning.repositories import (
+    ConversationRepository,
+)
 from engines.slack.services.slack_identity_service import (
     SlackIdentityService,
 )
@@ -43,6 +52,7 @@ class SlackSocketMode:
         slack_client,
         calendar_agent=None,
         calendar_worker=None,
+        conversation_repository: ConversationRepository | None = None,
     ) -> None:
 
         self._slack_service = slack_service
@@ -52,6 +62,17 @@ class SlackSocketMode:
         self._calendar_worker = calendar_worker
         self._identity_service = SlackIdentityService()
         self._settings = get_settings()
+        self._deduplicator = EventDeduplicator()
+
+        if conversation_repository is not None:
+            self._conversation_repository = conversation_repository
+        else:
+            try:
+                from api.dependencies import get_conversation_repository
+
+                self._conversation_repository = get_conversation_repository()
+            except Exception:
+                self._conversation_repository = None
 
         self._app = App(
             token=self._settings.slack_bot_token,
@@ -84,28 +105,23 @@ class SlackSocketMode:
             ts = event.get("ts")
             thread_ts = event.get("thread_ts")
 
-            if not user_id:
+            if not user_id or not channel_id or not ts:
                 return
-
-            if not channel_id:
-                return
-
-            if not ts:
-                return
-
-            # ======================================================
-            # Detect whether this message is directed at POLIS.
-            # ======================================================
 
             bot_user_id = self._settings.slack_bot_user_id
 
-            mention_token = f"<@{bot_user_id}>"
+            # Ignore messages authored by POLIS itself to prevent self-reply loops.
+            if bot_user_id and user_id == bot_user_id:
+                return
 
-            is_polis_question = mention_token in text
-            is_direct_message = (
-                event.get("channel_type") == "im"
-                or channel_id.startswith("D")
-            )
+            # Prevent duplicate processing of retried or multi-subscribed events.
+            if self._deduplicator.is_duplicate(channel_id, ts):
+                logger.info(
+                    "Ignoring duplicate Slack event: channel=%s, ts=%s",
+                    channel_id,
+                    ts,
+                )
+                return
 
             # ======================================================
             # Always ingest the message first.
@@ -161,28 +177,40 @@ class SlackSocketMode:
                 return
 
             # ======================================================
-            # If POLIS was not mentioned, learning is complete.
-            # Do not reply.
+            # Routing gate: Direct Messages, explicit mentions,
+            # and established POLIS conversation threads.
             # ======================================================
 
-            # Direct-message recipients can stop reminders without
-            # needing Slack's special mention syntax.
-            question_text = text.replace(
-                mention_token,
-                "",
-            ).strip()
+            is_direct = is_direct_channel(
+                event=event,
+                channel_id=channel_id,
+            )
+            is_polis_question = is_bot_mentioned(
+                text=text,
+                bot_user_id=bot_user_id,
+            )
 
-            if is_direct_message:
-                question_text = re.sub(
-                    r"^@polis\s+",
-                    "",
-                    question_text,
-                    flags=re.IGNORECASE,
-                ).strip()
+            is_established_thread = False
+            if thread_ts and self._conversation_repository is not None:
+                existing_context = self._conversation_repository.get(
+                    channel_id=channel_id,
+                    thread_ts=thread_ts,
+                )
+                if (
+                    existing_context is not None
+                    and any(msg.get("role") == "assistant" for msg in existing_context.history)
+                ):
+                    is_established_thread = True
 
-            if not is_polis_question and not (
-                is_direct_message and question_text.lower() == "stop"
-            ):
+            if not (is_direct or is_polis_question or is_established_thread):
+                return
+
+            question_text = clean_slack_text(
+                text=text,
+                bot_user_id=bot_user_id,
+            )
+
+            if not question_text:
                 return
 
             # ======================================================
@@ -194,11 +222,20 @@ class SlackSocketMode:
                     user_id,
                 )
 
+                reply_text = (
+                    f"Stopped {stopped_count} active reminder(s)."
+                )
+                reply_thread_ts = thread_ts or ts
+                self._record_conversation_exchange(
+                    channel_id=channel_id,
+                    thread_ts=reply_thread_ts,
+                    user_id=user_id,
+                    user_message=question_text,
+                    assistant_message=reply_text,
+                )
                 say(
-                    text=(
-                        f"Stopped {stopped_count} active reminder(s)."
-                    ),
-                    thread_ts=thread_ts or ts,
+                    text=reply_text,
+                    thread_ts=reply_thread_ts,
                 )
                 return
 
@@ -260,16 +297,23 @@ class SlackSocketMode:
                     time_2=self._settings.reminder_time_2,
                 )
 
-                say(
-                    text=(
-                        f"Done! I've set a reminder. "
-                        f"I'll remind <@{target_user_id}> "
-                        f"twice daily about: {reminder.task}"
-                    ),
-                    thread_ts=thread_ts or ts,
+                reply_text = (
+                    f"Done! I've set a reminder. "
+                    f"I'll remind <@{target_user_id}> "
+                    f"twice daily about: {reminder.task}"
                 )
-                return
-            if not question_text:
+                reply_thread_ts = thread_ts or ts
+                self._record_conversation_exchange(
+                    channel_id=channel_id,
+                    thread_ts=reply_thread_ts,
+                    user_id=user_id,
+                    user_message=question_text,
+                    assistant_message=reply_text,
+                )
+                say(
+                    text=reply_text,
+                    thread_ts=reply_thread_ts,
+                )
                 return
 
             # ======================================================
@@ -283,9 +327,17 @@ class SlackSocketMode:
                     channel_id=channel_id,
                 )
                 if calendar_response is not None:
+                    reply_thread_ts = thread_ts or ts
+                    self._record_conversation_exchange(
+                        channel_id=channel_id,
+                        thread_ts=reply_thread_ts,
+                        user_id=user_id,
+                        user_message=question_text,
+                        assistant_message=calendar_response,
+                    )
                     say(
                         text=calendar_response,
-                        thread_ts=thread_ts or ts,
+                        thread_ts=reply_thread_ts,
                     )
                     return
 
@@ -294,18 +346,69 @@ class SlackSocketMode:
             # ======================================================
 
             try:
+                reply_thread_ts = (
+                    thread_ts or ts
+                )
+
+                conversation_context = None
+                if self._conversation_repository is not None:
+                    conversation_context = self._conversation_repository.get(
+                        channel_id=channel_id,
+                        thread_ts=reply_thread_ts,
+                    )
+
+                    is_dm = channel_id.startswith("D")
+                    if conversation_context is None:
+                        history = []
+                        if (
+                            is_dm
+                            and hasattr(self._conversation_repository, "get_latest")
+                        ):
+                            latest_context = self._conversation_repository.get_latest(
+                                channel_id,
+                                user_id=user_id,
+                            )
+                            if latest_context is not None:
+                                history = latest_context.history
+
+                        conversation_context = ConversationContext(
+                            user_id=user_id,
+                            channel_id=channel_id,
+                            thread_ts=reply_thread_ts,
+                            history=history,
+                            channel_type="im" if is_dm else None,
+                        )
+                    else:
+                        if is_dm and conversation_context.user_id and conversation_context.user_id != user_id:
+                            conversation_context = ConversationContext(
+                                user_id=user_id,
+                                channel_id=channel_id,
+                                thread_ts=reply_thread_ts,
+                                history=[],
+                                channel_type="im",
+                            )
+                        else:
+                            conversation_context = ConversationContext(
+                                user_id=user_id,
+                                channel_id=channel_id,
+                                thread_ts=reply_thread_ts,
+                                history=conversation_context.history,
+                                channel_type=conversation_context.channel_type or ("im" if is_dm else None),
+                            )
+                else:
+                    conversation_context = ConversationContext(
+                        user_id=user_id,
+                        channel_id=channel_id,
+                        thread_ts=reply_thread_ts,
+                    )
 
                 question = Question(
                     text=question_text,
-                    context=ConversationContext(
-                        user_id=user_id,
-                        channel_id=channel_id,
-                        thread_ts=thread_ts or ts,
-                    ),
+                    context=conversation_context,
                 )
 
                 answer = self._slack_service.ask(
-                question,
+                    question,
                 )
 
                 logger.info(
@@ -313,18 +416,12 @@ class SlackSocketMode:
                     answer.confidence,
                 )
 
-                # ==================================================
-                # Reply in the same thread.
-                #
-                # If the original message is already in a thread,
-                # use its parent thread_ts.
-                #
-                # Otherwise, the current message becomes the
-                # thread parent.
-                # ==================================================
-
-                reply_thread_ts = (
-                    thread_ts or ts
+                self._record_conversation_exchange(
+                    channel_id=channel_id,
+                    thread_ts=reply_thread_ts,
+                    user_id=user_id,
+                    user_message=question_text,
+                    assistant_message=answer.text,
                 )
 
                 say(
@@ -345,6 +442,65 @@ class SlackSocketMode:
                     ),
                     thread_ts=thread_ts or ts,
                 )
+
+    def _record_conversation_exchange(
+        self,
+        channel_id: str,
+        thread_ts: str,
+        user_id: str,
+        user_message: str,
+        assistant_message: str,
+    ) -> None:
+        """
+        Record a conversation exchange in the repository to establish thread state.
+        """
+        if self._conversation_repository is None:
+            return
+
+        try:
+            context = self._conversation_repository.get(
+                channel_id=channel_id,
+                thread_ts=thread_ts,
+            )
+
+            is_dm = channel_id.startswith("D")
+            if context is None:
+                context = ConversationContext(
+                    user_id=user_id,
+                    channel_id=channel_id,
+                    thread_ts=thread_ts,
+                    channel_type="im" if is_dm else None,
+                )
+            else:
+                if is_dm and context.user_id and context.user_id != user_id:
+                    logger.warning(
+                        "Cannot record exchange in private DM owned by another user: expected %s, got %s",
+                        context.user_id,
+                        user_id,
+                    )
+                    return
+
+                context = ConversationContext(
+                    user_id=context.user_id if is_dm else user_id,
+                    channel_id=channel_id,
+                    thread_ts=thread_ts,
+                    history=context.history,
+                    channel_type=context.channel_type or ("im" if is_dm else None),
+                )
+
+            updated = context.add_exchange(
+                user_message=user_message,
+                assistant_message=assistant_message,
+                user_id=user_id,
+            )
+            self._conversation_repository.save(updated)
+
+        except Exception:
+            logger.exception(
+                "Failed to record conversation exchange for thread %s",
+                thread_ts,
+            )
+
 
     def _run_reminder_worker(self) -> None:
         """
