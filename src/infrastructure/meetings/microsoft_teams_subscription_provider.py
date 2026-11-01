@@ -22,6 +22,25 @@ class MicrosoftTeamsSubscriptionProvider:
 
     GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 
+    @staticmethod
+    def _raise_for_graph_error(response: requests.Response) -> None:
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            try:
+                error = response.json().get("error", {})
+                code = error.get("code", "Unknown")
+                message = error.get("message", "No error message provided")
+            except (ValueError, AttributeError, TypeError):
+                code = "Unknown"
+                message = "Microsoft Graph returned a non-JSON error response"
+
+            raise requests.HTTPError(
+                f"Microsoft Graph request failed "
+                f"(HTTP {response.status_code}, {code}): {message}",
+                response=response,
+            ) from exc
+
     def __init__(
         self,
         access_token_provider,
@@ -62,9 +81,10 @@ class MicrosoftTeamsSubscriptionProvider:
             timeout=self.timeout,
         )
 
-        response.raise_for_status()
+        self._raise_for_graph_error(response)
 
         return response.json()
+
     def renew_subscription(
         self,
         *,
@@ -93,6 +113,6 @@ class MicrosoftTeamsSubscriptionProvider:
             timeout=self.timeout,
         )
 
-        response.raise_for_status()
+        self._raise_for_graph_error(response)
 
         return response.json()
