@@ -3932,12 +3932,22 @@ class SimpleCognitiveEngine(
         if "30 days" in norm_q or "month" in norm_q or "past month" in norm_q:
             lookback_days = 30
 
+        # Wire LLM client to PersonWorkService if not already configured
+        if getattr(self._person_work_service, "llm_client", None) is None:
+            engine_llm = (
+                getattr(self._planner, "_llm_client", None)
+                or getattr(self._question_answering, "_llm_client", None)
+            )
+            if engine_llm is not None:
+                self._person_work_service.llm_client = engine_llm
+
         summary = self._person_work_service.get_person_work_summary(
             target_user_id=target_user_id,
             target_user_name=target_user_name,
             requester_user_id=req_user_id,
             query_text=question.text,
             lookback_days=lookback_days,
+            is_self=is_self,
         )
 
         clear_pending = bool(context and context.pending_operation)
@@ -3945,6 +3955,6 @@ class SimpleCognitiveEngine(
             text=summary.formatted_response,
             confidence=1.0,
             evidence=[item.text if hasattr(item, "text") else item.evidence for item in summary.items],
-            is_conversational=False,
+            is_conversational=True,
             clear_pending=clear_pending,
         )

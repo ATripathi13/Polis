@@ -510,6 +510,7 @@ def bootstrap(
         communication_repository=communication_repository,
         operational_item_repository=operational_item_repository,
         identity_service=canonical_identity_service,
+        llm_client=llm_client,
     )
 
     planner = CognitivePlanner(
