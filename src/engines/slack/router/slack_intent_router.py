@@ -291,6 +291,19 @@ class SlackIntentRouter:
                     requester_user_id=message.user,
                 )
 
+            if target_user and target_user.get("is_ambiguous"):
+                candidates = ", ".join(f"`{c}`" for c in target_user.get("candidate_names", []))
+                clarification_text = (
+                    f"Multiple team members match that name ({candidates}). "
+                    "Could you please clarify which person you mean?"
+                )
+                self._responder.reply(
+                    channel=message.channel,
+                    thread_ts=message.thread_ts or message.ts,
+                    text=clarification_text,
+                )
+                return
+
             question = Question(
                 text=question_text,
                 context=conversation_context,
@@ -299,6 +312,7 @@ class SlackIntentRouter:
                     if target_user is not None
                     else None
                 ),
+
                 target_user_name=(
                     target_user["name"]
                     if target_user is not None
@@ -375,7 +389,7 @@ class SlackIntentRouter:
 
         normalized_text = text.lower()
 
-        users = self._identity_service.get_workspace_users()
+        users = self._identity_service.get_workspace_users() if self._identity_service is not None else []
 
         # ------------------------------------------------------
         # EXPLICIT SLACK USER MENTION
@@ -388,23 +402,23 @@ class SlackIntentRouter:
 
         if mention_match:
             mentioned_user_id = mention_match.group(1)
+            display_name = mentioned_user_id
 
             for user in users:
-                if user.get("id") != mentioned_user_id:
-                    continue
+                if user.get("id") == mentioned_user_id:
+                    display_name = (
+                        user.get("profile", {})
+                        .get("display_name")
+                        or user.get("real_name")
+                        or user.get("name")
+                        or mentioned_user_id
+                    )
+                    break
 
-                display_name = (
-                    user.get("profile", {})
-                    .get("display_name")
-                    or user.get("real_name")
-                    or user.get("name")
-                    or mentioned_user_id
-                )
-
-                return {
-                    "id": mentioned_user_id,
-                    "name": display_name,
-                }
+            return {
+                "id": mentioned_user_id,
+                "name": display_name,
+            }
         matches: list[dict] = []
 
         for user in users:
@@ -456,6 +470,23 @@ class SlackIntentRouter:
             return {
                 "id": user["id"],
                 "name": display_name,
+            }
+
+        if len(matches) > 1:
+            candidate_names = [
+                (
+                    u.get("profile", {}).get("display_name")
+                    or u.get("real_name")
+                    or u.get("name")
+                    or u["id"]
+                )
+                for u in matches
+            ]
+            return {
+                "id": None,
+                "name": None,
+                "is_ambiguous": True,
+                "candidate_names": candidate_names,
             }
 
         self_references = {

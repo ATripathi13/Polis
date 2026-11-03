@@ -118,4 +118,5 @@ class ApplicationContainer:
 
     workday_session_repository: WorkdaySessionRepository | None = None
     person_preference_repository: PersonPreferenceRepository | None = None
+    person_work_service: Any | None = None
 

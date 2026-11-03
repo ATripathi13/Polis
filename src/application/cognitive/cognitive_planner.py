@@ -41,7 +41,8 @@ POLIS has the following specialist capabilities and target agents:
 4. 'governance_agent': Compliance policies, approvals, violations, governance rules.
 5. 'activity_service': Real-time work status, break tracking, shift start/end times.
 6. 'reminder_service': Setting personal or channel reminders.
-7. 'general_reasoner': Historical communications, multi-agent synthesis, conversational greetings, clarifications.
+7. 'general_reasoner': Historical communications, multi-agent synthesis, conversational greetings, clarifications, employee work queries.
+8. Person-specific recent work, current tasks, commitments, blockers, or completed work queries (for self or specific colleagues) MUST be planned with intent 'employee_work_query' targeting 'general_reasoner'.
 
 Rules for planning:
 1. Select ONLY the specialists required for the request. Do not include unnecessary agents.
@@ -109,9 +110,11 @@ class CognitivePlanner:
         self,
         llm_client: OpenRouterClient | None = None,
         default_timezone: ZoneInfo | None = None,
+        identity_service: Any | None = None,
     ) -> None:
         self._llm_client = llm_client
         self._default_timezone = default_timezone or ZoneInfo("Asia/Kolkata")
+        self._identity_service = identity_service
 
     def plan(
         self,
@@ -121,10 +124,14 @@ class CognitivePlanner:
         """
         Produce a validated structured CognitivePlan for the request.
         """
+        target_user_id = None
+        target_user_name = None
         if isinstance(question, Question):
             raw_text = question.text or ""
             ctx = context or question.context
-            req_user = ctx.user_id if ctx else None
+            req_user = question.user_id or (ctx.user_id if ctx else None)
+            target_user_id = question.target_user_id
+            target_user_name = question.target_user_name
         else:
             raw_text = str(question)
             ctx = context
@@ -202,7 +209,14 @@ class CognitivePlanner:
         # ------------------------------------------------------------------
         # 4. DETERMINISTIC FALLBACK PLANNER
         # ------------------------------------------------------------------
-        return self._plan_deterministic(request_id, text, ctx, req_user)
+        return self._plan_deterministic(
+            request_id=request_id,
+            text=text,
+            ctx=ctx,
+            req_user=req_user,
+            target_user_id=target_user_id,
+            target_user_name=target_user_name,
+        )
 
     # ======================================================================
     # PENDING CONTINUATION
@@ -587,6 +601,148 @@ class CognitivePlanner:
             )
         return None
 
+    def _check_employee_work_query(
+        self,
+        request_id: str,
+        text: str,
+        norm: str,
+        extracted: ExtractedEntities,
+        ctx: ConversationContext | None,
+        req_user: str | None,
+        target_user_id: str | None = None,
+        target_user_name: str | None = None,
+    ) -> CognitivePlan | None:
+        self_work_patterns = (
+            r"\bwhat\s+(?:am\s+i|have\s+i\s+been)\s+(?:currently\s+)?working\s+on\b",
+            r"\b(?:give\s+me\s+a\s+)?(?:summary\s+of\s+)?my\s+(?:current\s+)?(?:work|priorities|recent\s+work|tasks\s+and\s+priorities)\b",
+            r"\bsummarize\s+my\s+(?:recent\s+)?work(?:\s+from\s+slack)?\b",
+            r"\bwhat\s+(?:work|tasks)\s+(?:have\s+i|did\s+i)\s+(?:handled|completed|worked\s+on)(?:\s+recently|\s+this\s+week)?\b",
+            r"\bwhat\s+(?:have\s+i|did\s+i)\s+completed(?:\s+recently|\s+this\s+week)?\b",
+            r"\bwhat\s+am\s+i\s+blocked\s+on\b",
+            r"\bwhat\s+(?:should|do)\s+i\s+work\s+on(?:\s+today)?\b",
+            r"\bmy\s+recent\s+work\b",
+            r"\bmy\s+current\s+work\b",
+        )
+
+        other_work_patterns = (
+            r"\bwhat\s+is\s+(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)\s+(?:currently\s+)?working\s+on\b",
+            r"\bwhat\s+is\s+(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)\s+blocked\s+on\b",
+            r"\bwhat\s+(?:tasks\s+)?has\s+(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)\s+(?:handled|completed|done|worked\s+on)(?:\s+recently|\s+this\s+week)?\b",
+            r"\bwhat\s+has\s+(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)\s+completed(?:\s+recently|\s+this\s+week)?\b",
+            r"\b(?:give\s+me\s+a\s+)?(?:summary\s+of\s+)?(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)'s\s+(?:current\s+)?(?:work|priorities|recent\s+work|tasks)\b",
+            r"\bsummarize\s+(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)(?:'s)?\s+(?:recent\s+)?work(?:\s+from\s+slack)?\b",
+            r"\bwhat\s+is\s+this\s+person\s+(?:currently\s+)?(?:working|blocked)\s+on\b",
+            r"\bwhat\s+is\s+this\s+person\s+working\s+on\b",
+        )
+
+        is_self = any(re.search(pat, norm) for pat in self_work_patterns)
+        is_other = any(re.search(pat, norm) for pat in other_work_patterns)
+
+        if not is_self and not is_other:
+            return None
+
+        effective_target_id = target_user_id
+        effective_target_name = target_user_name
+
+        if is_self:
+            effective_target_id = req_user
+            effective_target_name = None
+        else:
+            named_person = None
+            if extracted.employee_names:
+                named_person = extracted.employee_names[0]
+            elif "this person" in norm:
+                if ctx and ctx.history:
+                    for msg in reversed(ctx.history):
+                        if msg.get("user") or msg.get("author"):
+                            named_person = msg.get("author") or msg.get("user")
+                            break
+                named_person = named_person or "this person"
+
+            if named_person and not effective_target_id:
+                if named_person.startswith("U") and len(named_person) >= 8 and named_person[1:].isalnum():
+                    effective_target_id = named_person
+                elif self._identity_service is not None:
+                    try:
+                        users = self._identity_service.get_workspace_users()
+                        matches = []
+                        for u in users:
+                            disp = u.get("profile", {}).get("display_name") or ""
+                            real = u.get("real_name") or ""
+                            uname = u.get("name") or ""
+                            candidates = {disp.lower(), real.lower(), uname.lower()}
+                            if any(named_person.lower() == c or named_person.lower() in c.split() for c in candidates if c):
+                                matches.append(u)
+
+                        if len(matches) > 1:
+                            candidate_names = [
+                                (u.get("profile", {}).get("display_name") or u.get("real_name") or u.get("name") or u["id"])
+                                for u in matches
+                            ]
+                            cand_str = ", ".join(f"`{c}`" for c in candidate_names)
+                            return CognitivePlan(
+                                request_id=request_id,
+                                original_message=text,
+                                intent=IntentCategory.EMPLOYEE_WORK_QUERY,
+                                intent_confidence=0.95,
+                                requested_outcome="Clarify ambiguous employee identity",
+                                entities=extracted,
+                                required_agents=[TargetAgent.GENERAL_REASONER],
+                                execution_steps=[],
+                                missing_information=["target_user_id"],
+                                requires_clarification=True,
+                                clarification_prompt=f"Multiple team members match that name ({cand_str}). Could you please clarify which person you mean?",
+                                action_required=False,
+                                risk_level="low",
+                            )
+                        elif len(matches) == 1:
+                            effective_target_id = matches[0]["id"]
+                            effective_target_name = (
+                                matches[0].get("profile", {}).get("display_name")
+                                or matches[0].get("real_name")
+                                or matches[0].get("name")
+                            )
+                        else:
+                            effective_target_name = named_person
+                    except Exception as err:
+                        logger.warning("Identity lookup in planner failed: %s", err)
+                        effective_target_name = named_person
+                else:
+                    effective_target_name = named_person
+
+        target_display = effective_target_name or effective_target_id or ("you" if is_self else "employee")
+        extracted_copy = extracted.model_copy()
+        extracted_copy.target_user_id = effective_target_id
+        extracted_copy.target_user_name = effective_target_name
+
+        return CognitivePlan(
+            request_id=request_id,
+            original_message=text,
+            intent=IntentCategory.EMPLOYEE_WORK_QUERY,
+            intent_confidence=0.95,
+            requested_outcome=f"Retrieve recent work and task activity for {target_display}",
+            entities=extracted_copy,
+            required_agents=[TargetAgent.GENERAL_REASONER],
+            execution_steps=[
+                ExecutionStep(
+                    step_id="step_1",
+                    agent=TargetAgent.GENERAL_REASONER,
+                    action="get_person_recent_activity",
+                    action_type=ActionType.READ,
+                    parameters={
+                        "target_user_id": effective_target_id,
+                        "target_user_name": effective_target_name,
+                        "requester_user_id": req_user,
+                    },
+                )
+            ],
+            missing_information=[],
+            requires_clarification=False,
+            clarification_prompt=None,
+            action_required=False,
+            risk_level="low",
+        )
+
     # ======================================================================
     # LLM-BASED PLANNING
     # ======================================================================
@@ -655,6 +811,8 @@ class CognitivePlanner:
         text: str,
         ctx: ConversationContext | None,
         req_user: str | None,
+        target_user_id: str | None = None,
+        target_user_name: str | None = None,
     ) -> CognitivePlan:
         """
         Robust deterministic planner when LLM is unavailable or yields malformed output.
@@ -1126,6 +1284,22 @@ class CognitivePlanner:
                 risk_level="low",
             )
 
+        # ------------------------------------------------------------------
+        # E2. Person-Specific Recent Work & Task Queries (EMPLOYEE_WORK_QUERY)
+        # ------------------------------------------------------------------
+        employee_work_plan = self._check_employee_work_query(
+            request_id=request_id,
+            text=text,
+            norm=norm,
+            extracted=extracted,
+            ctx=ctx,
+            req_user=req_user,
+            target_user_id=target_user_id,
+            target_user_name=target_user_name,
+        )
+        if employee_work_plan is not None:
+            return employee_work_plan
+
         if re.search(r"\b(?:tasks?|action\s+items?|todos?|actionable\s+steps?|break\s+(?:it\s+)?down)\b", norm):
             return CognitivePlan(
                 request_id=request_id,
@@ -1543,6 +1717,26 @@ class CognitivePlanner:
             if nm not in employee_names and nm.lower() not in ("today", "tomorrow", "yesterday", "noon"):
                 employee_names.append(nm)
 
+        # Work / task person query names: e.g. "What is Akshat working on?", "What has Gurkirat completed?"
+        work_name_patterns = (
+            r"\bwhat\s+is\s+([A-Z][a-z]+)\s+(?:currently\s+)?(?:working|blocked)\b",
+            r"\bwhat\s+(?:tasks\s+)?has\s+([A-Z][a-z]+)\s+(?:handled|completed|done|worked\s+on)\b",
+            r"\bwhat\s+has\s+([A-Z][a-z]+)\s+completed\b",
+            r"\b(?:about|on)\s+([A-Z][a-z]+)(?:'s)?\s+(?:tasks?|work|priorities|blockers?)\b",
+            r"\b([A-Z][a-z]+)'s\s+(?:tasks?|work|priorities|blockers?|activities|updates?)\b",
+            r"\b(?:summarize|summary\s+of)\s+([A-Z][a-z]+)(?:'s)?\s+(?:work|tasks?|priorities)\b",
+            r"\bwhat\s+is\s+([A-Z][a-z]+)\s+working\s+on\b",
+        )
+        stopwords = {
+            "today", "tomorrow", "yesterday", "noon", "what", "slack", "can", "could",
+            "please", "polis", "ivan", "canva", "this", "that", "the", "my", "me", "i",
+            "he", "she", "they", "we", "all",
+        }
+        for pat in work_name_patterns:
+            for nm in re.findall(pat, text, flags=re.IGNORECASE):
+                if nm not in employee_names and nm.lower() not in stopwords:
+                    employee_names.append(nm)
+
         # Event title
         title_match = re.search(
             r"\b(?:schedule|book|create)\s+(?:a\s+)?(?:meeting|event|call|sync|session)\s+(?:called|titled|about|for)\s+[\"']?([^\"'\n.,]+?)[\"']?(?:\s+(?:on|at|with|tomorrow|today|next|$)|$)",
@@ -1582,10 +1776,19 @@ class CognitivePlanner:
             if cand.lower() not in ("assigned", "assigned to", "for", "to"):
                 task_summary = cand
 
+        target_uid = None
+        target_uname = None
+        for en in employee_names:
+            if en.startswith("U") and len(en) >= 8 and en[1:].isalnum():
+                target_uid = en
+                break
+            elif not target_uname and en.lower() not in stopwords:
+                target_uname = en
 
         return ExtractedEntities(
             employee_names=employee_names,
-            target_user_id=employee_names[0] if employee_names and employee_names[0].startswith("U") else None,
+            target_user_id=target_uid or (employee_names[0] if employee_names and employee_names[0].startswith("U") else None),
+            target_user_name=target_uname,
             dates=dates,
             times=times,
             duration_minutes=duration_minutes,

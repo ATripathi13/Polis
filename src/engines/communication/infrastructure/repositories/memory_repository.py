@@ -127,7 +127,8 @@ class InMemoryCommunicationRepository(
                 word in searchable_text
                 for word in meaningful_words
             ):
-                continue
+                if actor_id is None:
+                    continue
 
             normalized_body = " ".join(
                 searchable_text.split()
@@ -143,3 +144,110 @@ class InMemoryCommunicationRepository(
                 break
 
         return results
+
+    def get_person_recent_activity(
+        self,
+        *,
+        actor_ids: list[str] | str,
+        actor_name: str | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        limit: int = 50,
+        include_mentions: bool = True,
+        include_parent_context: bool = True,
+    ) -> list[CommunicationEvent]:
+        from datetime import timezone, timedelta
+        from engines.communication.domain.value_objects import MessageReference
+
+        if isinstance(actor_ids, str):
+            id_list = [actor_ids.strip()] if actor_ids.strip() else []
+        else:
+            id_list = [i.strip() for i in actor_ids if i and i.strip()]
+
+        if not id_list and not actor_name:
+            return []
+
+        if start_time is None:
+            start_time = datetime.now(timezone.utc) - timedelta(days=7)
+
+        records = sorted(
+            self._events,
+            key=lambda event: event.created_at,
+            reverse=True,
+        )
+
+        results: list[CommunicationEvent] = []
+        seen_source_ids: set[str] = set()
+
+        for event in records:
+            if start_time is not None and event.created_at < start_time:
+                continue
+            if end_time is not None and event.created_at >= end_time:
+                continue
+
+            actor_internal = getattr(getattr(event.actor, "identity", None), "internal_id", "") or ""
+            actor_slack = (getattr(getattr(event.actor, "identity", None), "external_ids", {}) or {}).get("slack", "")
+            actor_disp = getattr(event.actor, "display_name", "") or ""
+            body = (getattr(event.content, "body", "") or "").strip()
+
+            matched = False
+            if actor_internal in id_list or actor_slack in id_list:
+                matched = True
+            elif actor_name and actor_disp.lower() == actor_name.lower():
+                matched = True
+            elif include_mentions:
+                # Check mentions list
+                for m in event.mentions:
+                    m_id = getattr(getattr(m, "identity", None), "internal_id", "")
+                    if m_id in id_list:
+                        matched = True
+                        break
+                # Check mentions in body
+                if not matched and any(f"<@{uid}" in body for uid in id_list):
+                    matched = True
+                elif not matched and actor_name and len(actor_name.strip()) >= 3 and actor_name.lower() in body.lower():
+                    matched = True
+
+            if not matched:
+                continue
+
+            if event.source_event_id in seen_source_ids:
+                continue
+            seen_source_ids.add(event.source_event_id)
+
+            # If reply and parent context requested
+            if (
+                include_parent_context
+                and event.correlation_id.business_id
+                and event.correlation_id.business_id != event.source_event_id
+            ):
+                parent_id = event.correlation_id.business_id
+                parent_ev = next((e for e in self._events if e.source_event_id == parent_id), None)
+                if parent_ev is not None:
+                    p_body = getattr(parent_ev.content, "body", "") or ""
+                    p_author = getattr(parent_ev.actor, "display_name", "") or ""
+                    p_channel = getattr(parent_ev.channel, "name", "") or ""
+
+                    event.content.metadata["parent_message_body"] = p_body
+                    event.content.metadata["parent_actor_name"] = p_author
+                    event.content.metadata["parent_channel_name"] = p_channel
+                    event.content.metadata["parent_ts"] = parent_id
+
+                    event.references.append(
+                        MessageReference(
+                            reference_id=parent_id,
+                            relationship_type="parent_message",
+                            source=event.source,
+                            metadata={
+                                "body": p_body,
+                                "author": p_author,
+                                "channel": p_channel,
+                            },
+                        )
+                    )
+
+            results.append(event)
+            if len(results) >= limit:
+                break
+
+        return results

@@ -118,6 +118,7 @@ class SimpleCognitiveEngine(
         coordinator: MultiStepCoordinator | None = None,
         operational_item_repository: OperationalItemRepository | None = None,
         identity_resolver: Any | None = None,
+        person_work_service: Any | None = None,
     ) -> None:
 
         self._pipeline = pipeline
@@ -151,6 +152,7 @@ class SimpleCognitiveEngine(
         self._calendar_agent = calendar_agent
         self._operational_item_repository = operational_item_repository
         self._identity_resolver = identity_resolver
+        self._person_work_service = person_work_service
 
         if planner is not None:
             self._planner = planner
@@ -170,6 +172,10 @@ class SimpleCognitiveEngine(
     @property
     def coordinator(self) -> MultiStepCoordinator:
         return self._coordinator
+
+    @property
+    def person_work_service(self):
+        return self._person_work_service
 
     @property
     def knowledge_agent(self):
@@ -694,6 +700,12 @@ class SimpleCognitiveEngine(
                 )
             ):
                 return self._dispatch_task_action(plan, question, context)
+
+        # ------------------------------------------------------
+        # EMPLOYEE WORK QUERY (Person-Specific Work & Tasks)
+        # ------------------------------------------------------
+        if plan.intent == IntentCategory.EMPLOYEE_WORK_QUERY:
+            return self._handle_employee_work_query(question, context, plan)
 
         # ------------------------------------------------------
         # 6. GENERAL CONVERSATION FAST PATH
@@ -3827,4 +3839,112 @@ class SimpleCognitiveEngine(
         return Answer(
             text="\n\n".join(sections),
             is_conversational=True,
+        )
+
+    def _handle_employee_work_query(
+        self,
+        question: Question,
+        context: ConversationContext | None,
+        plan: CognitivePlan,
+    ) -> Answer:
+        """
+        Handle person-specific recent work and task retrieval via PersonWorkService.
+        """
+        if self._person_work_service is None:
+            logger.warning("PersonWorkService not configured on SimpleCognitiveEngine.")
+            return Answer(
+                text="Person-specific work retrieval is not currently configured.",
+                confidence=0.5,
+                is_conversational=True,
+            )
+
+        step_params = plan.execution_steps[0].parameters if plan.execution_steps else {}
+        target_user_id = (
+            plan.entities.target_user_id
+            or question.target_user_id
+            or step_params.get("target_user_id")
+        )
+        target_user_name = (
+            plan.entities.target_user_name
+            or question.target_user_name
+            or step_params.get("target_user_name")
+        )
+        req_user_id = (
+            question.user_id
+            or (context.user_id if context else None)
+            or getattr(question, "requester_user_id", None)
+            or step_params.get("requester_user_id")
+        )
+
+        norm_q = question.text.lower()
+        is_self = bool(
+            re.search(r"\b(?:what\s+am\s+i|have\s+i|my\s+work|my\s+tasks|my\s+priorities|should\s+i\s+work|my\s+recent\s+work)\b", norm_q)
+            or (not target_user_id and not target_user_name and req_user_id)
+        )
+
+        if is_self and req_user_id:
+            target_user_id = req_user_id
+            if not target_user_name and self._identity_resolver is not None:
+                try:
+                    if hasattr(self._identity_resolver, "get_display_name"):
+                        target_user_name = self._identity_resolver.get_display_name(req_user_id)
+                except Exception:
+                    pass
+
+        # If name is present but id is not, try identity resolver to disambiguate or resolve id
+        if not target_user_id and target_user_name and self._identity_resolver is not None:
+            try:
+                users = []
+                if hasattr(self._identity_resolver, "get_workspace_users"):
+                    users = self._identity_resolver.get_workspace_users()
+                matches = []
+                for u in users:
+                    disp = u.get("profile", {}).get("display_name") or ""
+                    real = u.get("real_name") or ""
+                    uname = u.get("name") or ""
+                    candidates = {disp.lower(), real.lower(), uname.lower()}
+                    if any(target_user_name.lower() == c or target_user_name.lower() in c.split() for c in candidates if c):
+                        matches.append(u)
+
+                if len(matches) > 1:
+                    candidate_names = [
+                        (u.get("profile", {}).get("display_name") or u.get("real_name") or u.get("name") or u["id"])
+                        for u in matches
+                    ]
+                    cand_str = ", ".join(f"`{c}`" for c in candidate_names)
+                    return Answer(
+                        text=f"Multiple team members match that name ({cand_str}). Could you please clarify which person you mean?",
+                        confidence=1.0,
+                        is_conversational=True,
+                    )
+                elif len(matches) == 1:
+                    target_user_id = matches[0]["id"]
+                    target_user_name = (
+                        matches[0].get("profile", {}).get("display_name")
+                        or matches[0].get("real_name")
+                        or matches[0].get("name")
+                    )
+            except Exception as e:
+                logger.warning("Identity resolution error in _handle_employee_work_query: %s", e)
+
+        # Lookback period: default 7 days, 30 days if specified
+        lookback_days = 7
+        if "30 days" in norm_q or "month" in norm_q or "past month" in norm_q:
+            lookback_days = 30
+
+        summary = self._person_work_service.get_person_work_summary(
+            target_user_id=target_user_id,
+            target_user_name=target_user_name,
+            requester_user_id=req_user_id,
+            query_text=question.text,
+            lookback_days=lookback_days,
+        )
+
+        clear_pending = bool(context and context.pending_operation)
+        return Answer(
+            text=summary.formatted_response,
+            confidence=1.0,
+            evidence=[item.text if hasattr(item, "text") else item.evidence for item in summary.items],
+            is_conversational=False,
+            clear_pending=clear_pending,
         )

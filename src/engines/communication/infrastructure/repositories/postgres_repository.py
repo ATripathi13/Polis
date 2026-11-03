@@ -1,13 +1,15 @@
-﻿"""
+"""
 PostgreSQL repository for communication events.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
+
 
 from domain.common.identifier import Identifier
 
@@ -169,31 +171,39 @@ class PostgreSQLCommunicationRepository(
             return []
 
         with SessionLocal() as session:
-
-            records = (
-                session.query(
-                    CommunicationEventModel
-                )
-            )
+            records = session.query(CommunicationEventModel)
 
             if start_time is not None:
                 records = records.filter(
-                    CommunicationEventModel.created_at
-                    >= start_time
+                    CommunicationEventModel.created_at >= start_time
                 )
 
             if end_time is not None:
                 records = records.filter(
-                    CommunicationEventModel.created_at
-                    < end_time
+                    CommunicationEventModel.created_at < end_time
                 )
+
+            # Apply actor filtering in SQL before pagination/limiting
+            if actor_id is not None:
+                bind = session.get_bind()
+                if bind and bind.dialect.name == "postgresql":
+                    records = records.filter(
+                        or_(
+                            func.jsonb_extract_path_text(
+                                CommunicationEventModel.actor, "identity", "internal_id"
+                            ) == actor_id,
+                            func.jsonb_extract_path_text(
+                                CommunicationEventModel.actor, "identity", "external_ids", "slack"
+                            ) == actor_id,
+                        )
+                    )
 
             records = (
                 records
                 .order_by(
                     CommunicationEventModel.created_at.desc()
                 )
-                .limit(100)
+                .limit(limit * 5 if actor_id is not None else 100)
                 .all()
             )
 
@@ -236,18 +246,13 @@ class PostgreSQLCommunicationRepository(
             ranked_results = []
 
             for record in records:
-
                 if actor_id is not None:
+                    act_ident = (record.actor or {}).get("identity", {}) or {}
+                    ext_ids = act_ident.get("external_ids", {}) or {}
+                    internal_id = act_ident.get("internal_id")
+                    slack_id = ext_ids.get("slack")
 
-                    internal_id = (
-                        record.actor.get("identity", {}).get(
-                            "internal_id"
-                        )
-                        if record.actor
-                        else None
-                    )
-
-                    if internal_id != actor_id:
+                    if internal_id != actor_id and slack_id != actor_id:
                         continue
 
                 body = (
@@ -265,22 +270,26 @@ class PostgreSQLCommunicationRepository(
                     if self._to_domain(record).is_question():
                         continue
 
-                if not meaningful_words:
-                    continue
-
                 matched_words = {
                     word
                     for word in meaningful_words
                     if word in searchable_text
                 }
 
-                if not matched_words:
-                    continue
-
-                match_score = (
-                    len(matched_words)
-                    / len(meaningful_words)
-                )
+                if meaningful_words:
+                    if matched_words:
+                        match_score = (
+                            len(matched_words)
+                            / len(meaningful_words)
+                        )
+                    elif actor_id is not None:
+                        # Actor was explicitly filtered; do not drop substantive messages
+                        # that don't literally repeat meta-query words
+                        match_score = 0.5
+                    else:
+                        continue
+                else:
+                    match_score = 1.0
 
                 normalized_body = " ".join(
                     searchable_text.split()
@@ -312,6 +321,191 @@ class PostgreSQLCommunicationRepository(
                 event
                 for _, _, event in ranked_results[:limit]
             ]
+
+    def get_person_recent_activity(
+        self,
+        *,
+        actor_ids: list[str] | str,
+        actor_name: str | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        limit: int = 50,
+        include_mentions: bool = True,
+        include_parent_context: bool = True,
+    ) -> list[CommunicationEvent]:
+        """
+        Retrieve recent communications authored by or involving a specific person.
+        Supports:
+        - Person/actor identity filtering in SQL.
+        - Mentions of the person in message bodies.
+        - Look-back period (default 7 days).
+        - Thread parent context attachment for replies.
+        """
+        if isinstance(actor_ids, str):
+            id_list = [actor_ids.strip()] if actor_ids.strip() else []
+        else:
+            id_list = [i.strip() for i in actor_ids if i and i.strip()]
+
+        if not id_list and not actor_name:
+            return []
+
+        if start_time is None:
+            start_time = datetime.now(timezone.utc) - timedelta(days=7)
+
+        with SessionLocal() as session:
+            bind = session.get_bind()
+            is_postgres = bool(bind and bind.dialect.name == "postgresql")
+
+            query = session.query(CommunicationEventModel)
+
+            if start_time is not None:
+                query = query.filter(CommunicationEventModel.created_at >= start_time)
+            if end_time is not None:
+                query = query.filter(CommunicationEventModel.created_at < end_time)
+
+            if is_postgres:
+                conditions = []
+                if id_list:
+                    conditions.append(
+                        func.jsonb_extract_path_text(
+                            CommunicationEventModel.actor, "identity", "internal_id"
+                        ).in_(id_list)
+                    )
+                    conditions.append(
+                        func.jsonb_extract_path_text(
+                            CommunicationEventModel.actor, "identity", "external_ids", "slack"
+                        ).in_(id_list)
+                    )
+                if actor_name:
+                    clean_name = actor_name.strip()
+                    conditions.append(
+                        func.lower(
+                            func.jsonb_extract_path_text(
+                                CommunicationEventModel.actor, "display_name"
+                            )
+                        ) == clean_name.lower()
+                    )
+
+                if include_mentions:
+                    for uid in id_list:
+                        conditions.append(
+                            func.jsonb_extract_path_text(
+                                CommunicationEventModel.content, "body"
+                            ).ilike(f"%<@{uid}%")
+                        )
+                    if actor_name and len(actor_name.strip()) >= 3:
+                        conditions.append(
+                            func.jsonb_extract_path_text(
+                                CommunicationEventModel.content, "body"
+                            ).ilike(f"%{actor_name.strip()}%")
+                        )
+
+                if conditions:
+                    query = query.filter(or_(*conditions))
+
+                records = (
+                    query
+                    .order_by(CommunicationEventModel.created_at.desc())
+                    .limit(limit)
+                    .all()
+                )
+            else:
+                # Fallback for SQLite / generic mock engines in tests
+                all_recs = (
+                    query
+                    .order_by(CommunicationEventModel.created_at.desc())
+                    .all()
+                )
+                filtered = []
+                for r in all_recs:
+                    act = r.actor or {}
+                    ident = act.get("identity", {}) or {}
+                    ext = ident.get("external_ids", {}) or {}
+                    r_id = ident.get("internal_id") or ""
+                    r_slack = ext.get("slack") or ""
+                    r_name = act.get("display_name") or ""
+                    r_body = (r.content or {}).get("body", "")
+
+                    matched = False
+                    if r_id in id_list or r_slack in id_list:
+                        matched = True
+                    elif actor_name and r_name.lower() == actor_name.lower():
+                        matched = True
+                    elif include_mentions:
+                        if any(f"<@{uid}" in r_body for uid in id_list):
+                            matched = True
+                        elif actor_name and len(actor_name.strip()) >= 3 and actor_name.lower() in r_body.lower():
+                            matched = True
+
+                    if matched:
+                        filtered.append(r)
+                        if len(filtered) >= limit:
+                            break
+                records = filtered
+
+            if not records:
+                return []
+
+            # Retrieve parent context for thread replies
+            parent_records_map = {}
+            if include_parent_context:
+                parent_source_ids = {
+                    r.correlation_business_id
+                    for r in records
+                    if r.correlation_business_id
+                    and r.correlation_business_id != r.source_event_id
+                }
+                if parent_source_ids:
+                    parents = (
+                        session.query(CommunicationEventModel)
+                        .filter(CommunicationEventModel.source_event_id.in_(parent_source_ids))
+                        .all()
+                    )
+                    parent_records_map = {p.source_event_id: p for p in parents}
+
+            events = []
+            seen_source_ids = set()
+            for r in records:
+                if r.source_event_id in seen_source_ids:
+                    continue
+                seen_source_ids.add(r.source_event_id)
+
+                event = self._to_domain(r)
+
+                # If reply, attach parent context
+                if (
+                    r.correlation_business_id
+                    and r.correlation_business_id != r.source_event_id
+                    and r.correlation_business_id in parent_records_map
+                ):
+                    p_rec = parent_records_map[r.correlation_business_id]
+                    p_body = (p_rec.content or {}).get("body", "")
+                    p_actor_name = (p_rec.actor or {}).get("display_name", "")
+                    p_channel_name = (p_rec.channel or {}).get("name", "")
+                    p_ts = p_rec.source_event_id
+
+                    event.content.metadata["parent_message_body"] = p_body
+                    event.content.metadata["parent_actor_name"] = p_actor_name
+                    event.content.metadata["parent_channel_name"] = p_channel_name
+                    event.content.metadata["parent_ts"] = p_ts
+
+                    event.references.append(
+                        MessageReference(
+                            reference_id=p_ts,
+                            relationship_type="parent_message",
+                            source=r.source,
+                            metadata={
+                                "body": p_body,
+                                "author": p_actor_name,
+                                "channel": p_channel_name,
+                            },
+                        )
+                    )
+
+                events.append(event)
+
+            return events
+
             
     @staticmethod
     def _actor_to_dict(

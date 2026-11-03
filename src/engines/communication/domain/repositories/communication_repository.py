@@ -13,7 +13,7 @@ class CommunicationRepository(ABC):
         event: CommunicationEvent,
     ) -> CommunicationEvent:
         raise NotImplementedError
-    
+
     @abstractmethod
     def search(
         self,
@@ -25,3 +25,17 @@ class CommunicationRepository(ABC):
         end_time: datetime | None = None,
     ) -> list[CommunicationEvent]:
         raise NotImplementedError
+
+    @abstractmethod
+    def get_person_recent_activity(
+        self,
+        *,
+        actor_ids: list[str] | str,
+        actor_name: str | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        limit: int = 50,
+        include_mentions: bool = True,
+        include_parent_context: bool = True,
+    ) -> list[CommunicationEvent]:
+        raise NotImplementedError

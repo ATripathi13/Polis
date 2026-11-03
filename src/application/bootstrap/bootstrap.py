@@ -25,6 +25,9 @@ from application.cognitive import (
     CognitivePlanner,
     SimpleCognitiveEngine,
 )
+from application.person_work import (
+    PersonWorkService,
+)
 
 from application.activity import (
     ActivityDetector,
@@ -503,7 +506,16 @@ def bootstrap(
         max_attempts=settings.calendar_max_retry_attempts,
     )
 
-    planner = CognitivePlanner(llm_client=llm_client)
+    person_work_service = PersonWorkService(
+        communication_repository=communication_repository,
+        operational_item_repository=operational_item_repository,
+        identity_service=canonical_identity_service,
+    )
+
+    planner = CognitivePlanner(
+        llm_client=llm_client,
+        identity_service=canonical_identity_service,
+    )
 
     engine = SimpleCognitiveEngine(
         pipeline,
@@ -520,6 +532,7 @@ def bootstrap(
         planner=planner,
         operational_item_repository=operational_item_repository,
         identity_resolver=slack_identity_service,
+        person_work_service=person_work_service,
     )
     return ApplicationContainer(
         engine=engine,
@@ -548,6 +561,7 @@ def bootstrap(
         calendar_worker=calendar_worker,
         workday_session_repository=workday_session_repository,
         person_preference_repository=person_preference_repository,
+        person_work_service=person_work_service,
     )
 
 

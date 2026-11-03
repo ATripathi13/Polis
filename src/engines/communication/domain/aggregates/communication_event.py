@@ -88,6 +88,9 @@ class CommunicationEvent(AggregateRoot):
         actor: Actor,
         channel: Channel,
         content: Content,
+        mentions: list[Mention] | None = None,
+        attachments: list[Attachment] | None = None,
+        references: list[MessageReference] | None = None,
     ) -> Self:
         """
         Factory method.
@@ -100,6 +103,9 @@ class CommunicationEvent(AggregateRoot):
             actor=actor,
             channel=channel,
             content=content,
+            mentions=mentions or [],
+            attachments=attachments or [],
+            references=references or [],
         )
 
         event.validate()
