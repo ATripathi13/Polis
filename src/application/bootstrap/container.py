@@ -17,6 +17,8 @@ from application.activity import (
 
 from domain.activity import (
     ActivityService,
+    WorkdaySessionRepository,
+    PersonPreferenceRepository,
 )
 
 from domain.knowledge import (
@@ -113,4 +115,7 @@ class ApplicationContainer:
     calendar_service: CalendarService | None = None
     calendar_agent: CalendarAgent | None = None
     calendar_worker: CalendarReminderWorker | None = None
+
+    workday_session_repository: WorkdaySessionRepository | None = None
+    person_preference_repository: PersonPreferenceRepository | None = None
 

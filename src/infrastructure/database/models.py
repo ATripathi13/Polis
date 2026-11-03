@@ -1,13 +1,25 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    desc,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .connection import Base
-from sqlalchemy import Text
 
 class KnowledgeRecordModel(Base):
     __tablename__ = "knowledge_records"
@@ -810,3 +822,78 @@ class CalendarReminderDeliveryModel(Base):
     idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class WorkdaySessionModel(Base):
+    __tablename__ = "workday_sessions"
+
+    __table_args__ = (
+        Index("ix_workday_sessions_person_work_date", "person_id", "work_date"),
+        Index("ix_workday_sessions_person_started_at", "person_id", desc("started_at")),
+        Index(
+            "uq_workday_sessions_active_person",
+            "person_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    person_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    person_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    work_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    briefing_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    total_work_minutes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_break_minutes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    timezone: Mapped[str] = mapped_column(String(100), nullable=False)
+    start_source_event_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    end_source_event_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    business_id: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PersonPreferenceModel(Base):
+    __tablename__ = "person_preferences"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "person_id",
+            name="uq_person_preferences_person_id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    person_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    reminders_after_signoff: Mapped[str] = mapped_column(
+        String(50),
+        default="continue",
+        nullable=False,
+    )
+    preferred_timezone: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    business_id: Mapped[str] = mapped_column(
+        String(255),
+        default="",
+        nullable=False,
+    )
+    metadata_: Mapped[dict] = mapped_column(
+        "metadata",
+        JSONB,
+        default=dict,
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )

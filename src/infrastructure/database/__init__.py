@@ -45,6 +45,14 @@ from .calendar_repository import (
     PostgreSQLCalendarRepository,
 )
 
+from .workday_session_repository import (
+    PostgreSQLWorkdaySessionRepository,
+)
+
+from .person_preference_repository import (
+    PostgreSQLPersonPreferenceRepository,
+)
+
 __all__ = [
     "Base",
     "SessionLocal",
@@ -60,4 +68,6 @@ __all__ = [
     "PostgreSQLOrganizationEventRepository",
     "PostgreSQLGovernanceRepository",
     "PostgreSQLCalendarRepository",
+    "PostgreSQLWorkdaySessionRepository",
+    "PostgreSQLPersonPreferenceRepository",
 ]

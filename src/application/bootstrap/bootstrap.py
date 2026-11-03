@@ -74,6 +74,8 @@ from infrastructure.database import (
     PostgreSQLOrganizationEventRepository,
     PostgreSQLGovernanceRepository,
     PostgreSQLCalendarRepository,
+    PostgreSQLWorkdaySessionRepository,
+    PostgreSQLPersonPreferenceRepository,
 )
 
 from engines.communication.infrastructure.repositories import (
@@ -211,6 +213,12 @@ def bootstrap(
     organization_event_repository = (
         PostgreSQLOrganizationEventRepository()
     )
+    workday_session_repository = (
+        PostgreSQLWorkdaySessionRepository()
+    )
+    person_preference_repository = (
+        PostgreSQLPersonPreferenceRepository()
+    )
     operational_item_service = OperationalItemService(
         operational_item_repository,
     )
@@ -260,14 +268,20 @@ def bootstrap(
     activity_service = ActivityService(
         activity_repository,
         attendance_calculator,
+        workday_session_repository=workday_session_repository,
+        person_preference_repository=person_preference_repository,
+        default_timezone=settings.calendar_default_timezone,
     )
 
     activity_detector = ActivityDetector()
 
     activity_processor = ActivityProcessor(
-	    detector=activity_detector,
-	    activity_service=activity_service,
-	)
+        detector=activity_detector,
+        activity_service=activity_service,
+        workday_session_repository=workday_session_repository,
+        person_preference_repository=person_preference_repository,
+        default_timezone=settings.calendar_default_timezone,
+    )
     activity_question_service = ActivityQuestionService(
         activity_service=activity_service,
     )
@@ -518,6 +532,8 @@ def bootstrap(
         calendar_service=calendar_service,
         calendar_agent=calendar_agent,
         calendar_worker=calendar_worker,
+        workday_session_repository=workday_session_repository,
+        person_preference_repository=person_preference_repository,
     )
 
 
