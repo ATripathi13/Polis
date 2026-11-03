@@ -190,3 +190,42 @@ def test_get_known_knowledge_filtering_and_limits():
     # All with limit 2
     all_limited = agent.get_known_knowledge(limit=2)
     assert len(all_limited) == 2
+
+
+def test_retrieve_evidence_does_not_call_answer_service_or_llm():
+    """retrieve_evidence retrieves chunks without triggering redundant LLM answer synthesis."""
+    repo = InMemoryKnowledgeRepository()
+    mock_retrieval = MagicMock()
+    mock_answer_service = MagicMock()
+    mock_llm = MagicMock()
+
+    chunk = KnowledgeBaseChunk(
+        id="c1",
+        document_id="doc1",
+        chunk_index=0,
+        content="Our primary database is PostgreSQL 16.",
+        qdrant_point_id="p1",
+        metadata={"document_name": "db_architecture.md", "authority": "verified"},
+    )
+    mock_retrieval.retrieve.return_value = [(chunk, 0.95)]
+
+    agent = KnowledgeAgent(
+        knowledge_repository=repo,
+        retrieval_service=mock_retrieval,
+        answer_service=mock_answer_service,
+        llm_client=mock_llm,
+    )
+
+    # 1. Calling retrieve_evidence MUST return evidence without calling answer service or LLM
+    evidence = agent.retrieve_evidence("What database do we use?")
+    assert len(evidence) == 1
+    assert "PostgreSQL 16" in evidence[0]
+    mock_answer_service.answer.assert_not_called()
+    mock_llm.generate.assert_not_called()
+
+    # 2. Calling ask MUST call answer service for direct specialist answers
+    mock_answer_service.answer.return_value = MagicMock(text="We use PostgreSQL 16.", confidence=0.95)
+    result = agent.ask("What database do we use?")
+    assert mock_answer_service.answer.called
+    assert result.status == KnowledgeStatus.KNOWN
+    assert result.answer == "We use PostgreSQL 16."

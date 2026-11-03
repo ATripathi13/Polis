@@ -39,6 +39,8 @@ from domain.reasoning.repositories import (
 from engines.slack.services.slack_identity_service import (
     SlackIdentityService,
 )
+from engines.slack.router.slack_intent_router import _sanitize_error_message
+
 logger = logging.getLogger(__name__)
 class SlackSocketMode:
     """
@@ -63,6 +65,10 @@ class SlackSocketMode:
         self._identity_service = SlackIdentityService()
         self._settings = get_settings()
         self._deduplicator = EventDeduplicator()
+        self._lifecycle_state: str = "initialized"
+        self._stop_event: threading.Event = threading.Event()
+        self._reminder_worker_thread: threading.Thread | None = None
+        self._handler: SocketModeHandler | None = None
 
         if conversation_repository is not None:
             self._conversation_repository = conversation_repository
@@ -185,6 +191,8 @@ class SlackSocketMode:
                 event=event,
                 channel_id=channel_id,
             )
+            is_dm = is_direct
+            is_thread = thread_ts is not None
             is_polis_question = is_bot_mentioned(
                 text=text,
                 bot_user_id=bot_user_id,
@@ -192,15 +200,26 @@ class SlackSocketMode:
 
             is_established_thread = False
             if thread_ts and self._conversation_repository is not None:
-                existing_context = self._conversation_repository.get(
-                    channel_id=channel_id,
-                    thread_ts=thread_ts,
-                )
-                if (
-                    existing_context is not None
-                    and any(msg.get("role") == "assistant" for msg in existing_context.history)
-                ):
-                    is_established_thread = True
+                try:
+                    existing_context = self._conversation_repository.get(
+                        channel_id=channel_id,
+                        thread_ts=thread_ts,
+                    )
+                    if (
+                        existing_context is not None
+                        and any(msg.get("role") == "assistant" for msg in existing_context.history)
+                    ):
+                        is_established_thread = True
+                except Exception:
+                    logger.warning(
+                        "Failed to check established thread state",
+                        extra={
+                            "operation": "check_established_thread",
+                            "channel_id": channel_id,
+                            "thread_ts": thread_ts,
+                        },
+                    )
+                    is_established_thread = False
 
             if not (is_direct or is_polis_question or is_established_thread):
                 return
@@ -218,13 +237,26 @@ class SlackSocketMode:
             # ======================================================
 
             if question_text.lower() == "stop":
-                stopped_count = self._reminder_service.stop_for_target(
-                    user_id,
-                )
+                try:
+                    stopped_count = self._reminder_service.stop_for_target(
+                        user_id,
+                    )
+                    reply_text = (
+                        f"Stopped {stopped_count} active reminder(s)."
+                    )
+                except Exception:
+                    logger.error(
+                        "Failed to stop reminders for user",
+                        extra={
+                            "operation": "stop_reminders",
+                            "user_id": user_id,
+                        },
+                    )
+                    reply_text = (
+                        "I encountered an error while trying to stop reminders. "
+                        "Please try again later."
+                    )
 
-                reply_text = (
-                    f"Stopped {stopped_count} active reminder(s)."
-                )
                 reply_thread_ts = thread_ts or ts
                 self._record_conversation_exchange(
                     channel_id=channel_id,
@@ -285,23 +317,36 @@ class SlackSocketMode:
                     target_text,
                     task,
                 )
-                reminder = self._reminder_service.create(
-                    target_user_id=target_user_id,
-                    creator_user_id=user_id,
-                    task=task,
-                    channel_id=channel_id,
-                    source_message_ts=ts,
-                    source_thread_ts=thread_ts,
-                    timezone_name=self._settings.reminder_timezone,
-                    time_1=self._settings.reminder_time_1,
-                    time_2=self._settings.reminder_time_2,
-                )
+                try:
+                    reminder = self._reminder_service.create(
+                        target_user_id=target_user_id,
+                        creator_user_id=user_id,
+                        task=task,
+                        channel_id=channel_id,
+                        source_message_ts=ts,
+                        source_thread_ts=thread_ts,
+                        timezone_name=self._settings.reminder_timezone,
+                        time_1=self._settings.reminder_time_1,
+                        time_2=self._settings.reminder_time_2,
+                    )
+                    reply_text = (
+                        f"Done! I've set a reminder. "
+                        f"I'll remind <@{target_user_id}> "
+                        f"twice daily about: {reminder.task}"
+                    )
+                except Exception:
+                    logger.error(
+                        "Failed to create reminder",
+                        extra={
+                            "operation": "create_reminder",
+                            "target_user_id": target_user_id,
+                        },
+                    )
+                    reply_text = (
+                        "I encountered an error while trying to set that reminder. "
+                        "Please try again later."
+                    )
 
-                reply_text = (
-                    f"Done! I've set a reminder. "
-                    f"I'll remind <@{target_user_id}> "
-                    f"twice daily about: {reminder.task}"
-                )
                 reply_thread_ts = thread_ts or ts
                 self._record_conversation_exchange(
                     channel_id=channel_id,
@@ -346,59 +391,113 @@ class SlackSocketMode:
             # ======================================================
 
             try:
-                reply_thread_ts = (
-                    thread_ts or ts
-                )
-
+                reply_thread_ts = thread_ts or ts
                 conversation_context = None
+
                 if self._conversation_repository is not None:
                     conversation_context = self._conversation_repository.get(
                         channel_id=channel_id,
                         thread_ts=reply_thread_ts,
                     )
 
-                    is_dm = channel_id.startswith("D")
-                    if conversation_context is None:
-                        history = []
-                        if (
-                            is_dm
-                            and hasattr(self._conversation_repository, "get_latest")
-                        ):
-                            latest_context = self._conversation_repository.get_latest(
-                                channel_id,
-                                user_id=user_id,
-                            )
-                            if latest_context is not None:
-                                history = latest_context.history
+                    if is_direct:
+                        is_thread = thread_ts is not None
+                        latest_context = None
+                        if conversation_context is None:
+                            history = []
+                            if hasattr(self._conversation_repository, "get_latest"):
+                                latest_context = self._conversation_repository.get_latest(
+                                    channel_id,
+                                    user_id=user_id,
+                                )
+                                if latest_context is not None:
+                                    history = latest_context.history
 
-                        conversation_context = ConversationContext(
-                            user_id=user_id,
-                            channel_id=channel_id,
-                            thread_ts=reply_thread_ts,
-                            history=history,
-                            channel_type="im" if is_dm else None,
-                        )
-                    else:
-                        if is_dm and conversation_context.user_id and conversation_context.user_id != user_id:
+                            pending_op = None
+                            if latest_context is not None:
+                                pending_op = latest_context.get_pending_operation(
+                                    expected_user_id=user_id,
+                                    expected_channel_id=channel_id,
+                                    expected_thread_ts=thread_ts,
+                                )
+
+                            conversation_context = ConversationContext(
+                                user_id=user_id,
+                                channel_id=channel_id,
+                                thread_ts=reply_thread_ts,
+                                history=history,
+                                channel_type="im",
+                                pending_operation=pending_op,
+                                is_thread=is_thread,
+                            )
+                        else:
+                            if conversation_context.user_id and conversation_context.user_id != user_id:
+                                conversation_context = ConversationContext(
+                                    user_id=user_id,
+                                    channel_id=channel_id,
+                                    thread_ts=reply_thread_ts,
+                                    history=[],
+                                    channel_type="im",
+                                    pending_operation=None,
+                                    is_thread=is_thread,
+                                )
+                            else:
+                                valid_pending = conversation_context.get_pending_operation(
+                                    expected_user_id=user_id,
+                                    expected_channel_id=channel_id,
+                                    expected_thread_ts=thread_ts,
+                                )
+                                conversation_context = ConversationContext(
+                                    user_id=user_id,
+                                    channel_id=channel_id,
+                                    thread_ts=reply_thread_ts,
+                                    history=conversation_context.history,
+                                    channel_type="im",
+                                    pending_operation=valid_pending,
+                                    is_thread=is_thread,
+                                )
+
+                    elif thread_ts is not None:
+                        if conversation_context is None:
                             conversation_context = ConversationContext(
                                 user_id=user_id,
                                 channel_id=channel_id,
                                 thread_ts=reply_thread_ts,
                                 history=[],
-                                channel_type="im",
+                                is_thread=True,
                             )
                         else:
+                            valid_pending = conversation_context.get_pending_operation(
+                                expected_user_id=user_id,
+                                expected_channel_id=channel_id,
+                                expected_thread_ts=reply_thread_ts,
+                            )
                             conversation_context = ConversationContext(
                                 user_id=user_id,
                                 channel_id=channel_id,
                                 thread_ts=reply_thread_ts,
                                 history=conversation_context.history,
-                                channel_type=conversation_context.channel_type or ("im" if is_dm else None),
+                                channel_type=conversation_context.channel_type,
+                                pending_operation=valid_pending,
+                                is_thread=True,
                             )
+
+                    else:
+                        conversation_context = ConversationContext(
+                            user_id=user_id,
+                            channel_id=channel_id,
+                            thread_ts=reply_thread_ts,
+                            history=[],
+                            is_thread=False,
+                        )
 
                 question = Question(
                     text=question_text,
                     context=conversation_context,
+                    target_user_id=user_id,
+                    target_user_name=user_name,
+                    user_id=user_id,
+                    user_name=user_name,
                 )
 
                 answer = self._slack_service.ask(
@@ -410,23 +509,28 @@ class SlackSocketMode:
                     answer.confidence,
                 )
 
-                self._record_conversation_exchange(
-                    channel_id=channel_id,
-                    thread_ts=reply_thread_ts,
-                    user_id=user_id,
-                    user_message=question_text,
-                    assistant_message=answer.text,
-                )
+                if is_dm or is_thread:
+                    self._record_conversation_exchange(
+                        channel_id=channel_id,
+                        thread_ts=reply_thread_ts,
+                        user_id=user_id,
+                        user_message=question_text,
+                        assistant_message=answer.text,
+                        pending_operation=getattr(answer, "pending_operation", None),
+                        clear_pending=getattr(answer, "clear_pending", False),
+                    )
 
                 say(
                     text=answer.text,
-                    thread_ts=reply_thread_ts,
+                    thread_ts=thread_ts or ts,
                 )
 
-            except Exception:
+            except Exception as exc:
 
-                logger.exception(
-                    "POLIS failed to answer Slack question",
+                logger.error(
+                    "POLIS failed to answer Slack question: %s",
+                    _sanitize_error_message(str(exc)),
+                    extra={"operation": "answer_slack_question", "channel_id": channel_id},
                 )
 
                 say(
@@ -444,6 +548,8 @@ class SlackSocketMode:
         user_id: str,
         user_message: str,
         assistant_message: str,
+        pending_operation: Any = None,
+        clear_pending: bool = False,
     ) -> None:
         """
         Record a conversation exchange in the repository to establish thread state.
@@ -473,26 +579,35 @@ class SlackSocketMode:
                     )
                     return
 
+                valid_pending = context.get_pending_operation(
+                    expected_user_id=user_id,
+                    expected_channel_id=channel_id,
+                    expected_thread_ts=thread_ts,
+                )
                 context = ConversationContext(
                     user_id=context.user_id if is_dm else user_id,
                     channel_id=channel_id,
                     thread_ts=thread_ts,
                     history=context.history,
                     channel_type=context.channel_type or ("im" if is_dm else None),
+                    pending_operation=valid_pending,
                 )
-
 
             updated = context.add_exchange(
                 user_message=user_message,
                 assistant_message=assistant_message,
                 user_id=user_id,
+                pending_operation=pending_operation,
+                clear_pending=clear_pending,
             )
             self._conversation_repository.save(updated)
 
-        except Exception:
-            logger.exception(
-                "Failed to record conversation exchange for thread %s",
+        except Exception as exc:
+            logger.error(
+                "Failed to record conversation exchange for thread %s: %s",
                 thread_ts,
+                _sanitize_error_message(str(exc)),
+                extra={"operation": "record_conversation_exchange", "thread_ts": thread_ts},
             )
 
 
@@ -501,7 +616,7 @@ class SlackSocketMode:
         Poll PostgreSQL for due reminders and deliver them via Slack DM.
         """
 
-        while True:
+        while not self._stop_event.is_set():
             try:
                 due_reminders = self._reminder_service.find_due()
 
@@ -535,34 +650,88 @@ class SlackSocketMode:
                         )
 
                     except Exception:
-                        logger.exception(
-                            "Failed to deliver reminder %s",
-                            reminder.graph_id,
+                        logger.error(
+                            "Failed to deliver reminder",
+                            extra={
+                                "reminder_id": str(reminder.graph_id),
+                                "operation": "deliver_reminder_failure",
+                            },
                         )
 
             except Exception:
-                logger.exception(
+                logger.error(
                     "Reminder worker iteration failed",
+                    extra={"operation": "reminder_worker_iteration_failure"},
                 )
 
-            time.sleep(30)
+            self._stop_event.wait(timeout=30)
 
     def start(self) -> None:
-        reminder_worker = threading.Thread(
+        self._lifecycle_state = "running"
+        self._stop_event.clear()
+        self._reminder_worker_thread = threading.Thread(
             target=self._run_reminder_worker,
             name="polis-reminder-worker",
             daemon=True,
         )
-        reminder_worker.start()
+        self._reminder_worker_thread.start()
 
         if self._calendar_worker is not None:
             self._calendar_worker.start()
 
-        handler = SocketModeHandler(
+        self._handler = SocketModeHandler(
             self._app,
             self._settings.slack_app_token,
         )
-        handler.start()
+        try:
+            self._handler.start()
+        finally:
+            self.stop()
+
+    def stop(self) -> None:
+        """Stop Slack Socket Mode listener idempotently using persistent lifecycle state."""
+        if self._lifecycle_state in ("stopping", "stopped"):
+            logger.info(
+                "Slack Socket Mode listener already in %s state; skipping stop",
+                self._lifecycle_state,
+                extra={"operation": "stop_socket_listener", "lifecycle_state": self._lifecycle_state},
+            )
+            return
+
+        self._lifecycle_state = "stopping"
+        logger.info(
+            "Stopping Slack Socket Mode listener",
+            extra={"operation": "stop_socket_listener", "lifecycle_state": self._lifecycle_state},
+        )
+
+        try:
+            self._stop_event.set()
+            if self._reminder_worker_thread is not None and self._reminder_worker_thread.is_alive():
+                self._reminder_worker_thread.join(timeout=2.0)
+
+            if self._calendar_worker is not None and hasattr(self._calendar_worker, "stop"):
+                try:
+                    self._calendar_worker.stop()
+                except Exception:
+                    logger.warning(
+                        "Error stopping calendar worker",
+                        extra={"operation": "stop_calendar_worker"},
+                    )
+
+            if self._handler is not None and hasattr(self._handler, "close"):
+                try:
+                    self._handler.close()
+                except Exception:
+                    logger.warning(
+                        "Error closing SocketModeHandler",
+                        extra={"operation": "close_socket_handler"},
+                    )
+        finally:
+            self._lifecycle_state = "stopped"
+            logger.info(
+                "Slack Socket Mode listener stopped",
+                extra={"operation": "stop_socket_listener", "lifecycle_state": self._lifecycle_state},
+            )
 
 if __name__ == "__main__":
     from slack_listener import create_listener

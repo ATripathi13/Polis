@@ -48,7 +48,7 @@ class InMemoryOperationalItemRepository(OperationalItemRepository):
         self,
         item_id: str,
     ) -> OperationalItem | None:
-        return self._items.get(item_id)
+        return self._items.get(str(item_id))
 
     def find_by_source_event(
         self,
@@ -83,7 +83,7 @@ class InMemoryOperationalItemRepository(OperationalItemRepository):
         self,
         *,
         item_type: OperationalItemType | None = None,
-        owner_id: str | None = None,
+        owner_id: str | list[str] | set[str] | tuple[str, ...] | None = None,
     ) -> list[OperationalItem]:
         results = []
         open_statuses = {
@@ -94,8 +94,12 @@ class InMemoryOperationalItemRepository(OperationalItemRepository):
             if item.status in open_statuses:
                 if item_type is not None and item.item_type != item_type:
                     continue
-                if owner_id is not None and item.owner_id != owner_id:
-                    continue
+                if owner_id is not None:
+                    if isinstance(owner_id, (list, set, tuple)):
+                        if item.owner_id not in owner_id:
+                            continue
+                    elif item.owner_id != owner_id:
+                        continue
                 results.append(item)
         return sorted(results, key=lambda i: i.created_at, reverse=True)
 
@@ -116,6 +120,84 @@ class InMemoryOperationalItemRepository(OperationalItemRepository):
             ):
                 results.append(item)
         return sorted(results, key=lambda i: i.due_at or now)
+
+    def find_open_for_owner_or_name(
+        self,
+        *,
+        owner_id: str | list[str] | set[str] | tuple[str, ...],
+        owner_name: str,
+        item_type: OperationalItemType | None = None,
+    ) -> list[OperationalItem]:
+        results = []
+        open_statuses = {
+            OperationalItemStatus.OPEN,
+            OperationalItemStatus.IN_PROGRESS,
+        }
+        for item in self._items.values():
+            if item.status in open_statuses:
+                if item_type is not None and item.item_type != item_type:
+                    continue
+                if isinstance(owner_id, (list, set, tuple)):
+                    match_id = item.owner_id in owner_id
+                else:
+                    match_id = bool(owner_id and item.owner_id == owner_id)
+                match_name = bool(owner_name and owner_name.strip() and item.owner_name == owner_name)
+                if match_id or match_name:
+                    results.append(item)
+        return sorted(results, key=lambda i: i.created_at, reverse=True)
+
+    def find_overdue_for_owner_or_name(
+        self,
+        now: datetime,
+        *,
+        owner_id: str,
+        owner_name: str,
+    ) -> list[OperationalItem]:
+        results = []
+        open_statuses = {
+            OperationalItemStatus.OPEN,
+            OperationalItemStatus.IN_PROGRESS,
+        }
+        for item in self._items.values():
+            match_id = bool(owner_id and item.owner_id == owner_id)
+            match_name = bool(owner_name and owner_name.strip() and item.owner_name == owner_name)
+            if (
+                item.due_at is not None
+                and item.due_at < now
+                and item.status in open_statuses
+                and (match_id or match_name)
+            ):
+                results.append(item)
+        return sorted(results, key=lambda i: i.due_at)
+
+    def find_due_between_for_owner_or_name(
+        self,
+        start: datetime,
+        end: datetime,
+        *,
+        owner_id: str,
+        owner_name: str,
+    ) -> list[OperationalItem]:
+        if start > end:
+            raise ValueError(
+                f"start ({start}) must not be after end ({end})"
+            )
+        results = []
+        open_statuses = {
+            OperationalItemStatus.OPEN,
+            OperationalItemStatus.IN_PROGRESS,
+        }
+        for item in self._items.values():
+            match_id = bool(owner_id and item.owner_id == owner_id)
+            match_name = bool(owner_name and owner_name.strip() and item.owner_name == owner_name)
+            if (
+                item.due_at is not None
+                and start <= item.due_at <= end
+                and item.status in open_statuses
+                and (match_id or match_name)
+            ):
+                results.append(item)
+        return sorted(results, key=lambda i: i.due_at)
 
     def update_status(
         self,

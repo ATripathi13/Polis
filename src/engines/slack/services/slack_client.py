@@ -4,6 +4,7 @@ Slack Web API client.
 
 from __future__ import annotations
 
+import logging
 import os
 
 import requests
@@ -11,6 +12,8 @@ import requests
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 class SlackClient:
@@ -57,11 +60,11 @@ class SlackClient:
             timeout=10,
         )
 
-        print("=" * 80)
-        print("SLACK API RESPONSE")
-        print(response.status_code)
-        print(response.json())
-        print("=" * 80)
+        logger.debug(
+            "Slack API postMessage responded with status %s",
+            response.status_code,
+            extra={"operation": "slack_post_message", "status_code": response.status_code},
+        )
 
         data = response.json()
 

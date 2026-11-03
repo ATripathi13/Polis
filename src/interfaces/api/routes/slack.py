@@ -4,10 +4,14 @@ Slack API routes.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import (
     APIRouter,
     Depends,
 )
+
+logger = logging.getLogger(__name__)
 
 from application.cognitive import (
     CognitiveEngine,
@@ -77,7 +81,12 @@ async def receive_event(
         payload,
     )
 
-    print(message)
+    logger.debug(
+        "Slack webhook received event for channel %s, user %s",
+        message.channel,
+        message.user,
+        extra={"operation": "slack_webhook_event", "channel_id": message.channel, "user_id": message.user},
+    )
 
     connector = SlackConnector(
         engine,

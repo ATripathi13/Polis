@@ -1,7 +1,9 @@
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+import pytest
 
 from domain.activity import ActivitySource, ActivityType
 from domain.activity.aggregates.activity_event import ActivityEvent
@@ -44,6 +46,37 @@ def make_operational_item(item_type):
         evidence=["message-1", "message-2"],
         metadata={"correlation_id": "meeting-1", "test": True},
     )
+
+
+def make_operational_record(
+    item_type=OperationalItemType.TASK,
+    owner_id="person-1",
+    owner_name="Test Person",
+    status=OperationalItemStatus.OPEN,
+    due_at=None,
+):
+    item = make_operational_item(item_type)
+    return OperationalItemModel(
+        id=str(item.identifier.graph_id),
+        item_type=item_type.value,
+        summary=f"Test {item_type.value}",
+        status=status.value,
+        priority=item.priority.value,
+        owner_id=owner_id,
+        owner_name=owner_name,
+        due_at=due_at if due_at is not None else item.due_at,
+        source_event_id=item.source_event_id,
+        source_type=item.source_type,
+        confidence=item.confidence,
+        evidence=list(item.evidence),
+        metadata_=dict(item.metadata),
+        created_at=datetime(2026, 10, 20, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 10, 21, tzinfo=timezone.utc),
+    )
+
+
+def compile_filter(expr) -> str:
+    return str(expr.compile(compile_kwargs={"literal_binds": True}))
 
 
 def make_activity(
@@ -226,6 +259,223 @@ def test_operational_item_find_by_correlation_filters_item_type(monkeypatch):
     assert len(results) == 1
     assert results[0].item_type == OperationalItemType.RISK
     assert len(session.query_instance.filters) == 2
+
+
+def test_find_open_for_owner_or_name_filters_and_ordering(monkeypatch):
+    record = make_operational_record(
+        item_type=OperationalItemType.TASK,
+        owner_id="user-123",
+        owner_name="Alice Smith",
+        status=OperationalItemStatus.OPEN,
+    )
+    session = FakeSession([record])
+    monkeypatch.setattr(
+        operational_module,
+        "SessionLocal",
+        lambda: session,
+    )
+
+    results = PostgreSQLOperationalItemRepository().find_open_for_owner_or_name(
+        owner_id="user-123",
+        owner_name="Alice Smith",
+        item_type=OperationalItemType.TASK,
+    )
+
+    assert len(results) == 1
+    assert isinstance(results[0], OperationalItem)
+    assert results[0].identifier.graph_id == UUID(record.id)
+    assert results[0].item_type == OperationalItemType.TASK
+    assert results[0].summary == record.summary
+    assert results[0].status == OperationalItemStatus.OPEN
+    assert results[0].owner_id == "user-123"
+    assert results[0].owner_name == "Alice Smith"
+
+    compiled_filters = [compile_filter(f) for f in session.query_instance.filters]
+    assert "operational_items.status IN ('open', 'in_progress')" in compiled_filters
+    assert (
+        "operational_items.owner_id = 'user-123' OR operational_items.owner_name = 'Alice Smith'"
+        in compiled_filters
+    )
+    assert "operational_items.item_type = 'task'" in compiled_filters
+    assert len(session.query_instance.filters) == 3
+
+    assert len(session.query_instance.ordering) == 1
+    assert str(session.query_instance.ordering[0]) == "operational_items.created_at DESC"
+
+
+def test_find_open_for_owner_or_name_without_item_type_filter(monkeypatch):
+    record = make_operational_record(
+        item_type=OperationalItemType.DECISION,
+        owner_id="user-123",
+        owner_name="Alice Smith",
+        status=OperationalItemStatus.IN_PROGRESS,
+    )
+    session = FakeSession([record])
+    monkeypatch.setattr(
+        operational_module,
+        "SessionLocal",
+        lambda: session,
+    )
+
+    results = PostgreSQLOperationalItemRepository().find_open_for_owner_or_name(
+        owner_id="user-123",
+        owner_name="Alice Smith",
+        item_type=None,
+    )
+
+    assert len(results) == 1
+    assert isinstance(results[0], OperationalItem)
+    assert results[0].item_type == OperationalItemType.DECISION
+
+    compiled_filters = [compile_filter(f) for f in session.query_instance.filters]
+    assert "operational_items.status IN ('open', 'in_progress')" in compiled_filters
+    assert (
+        "operational_items.owner_id = 'user-123' OR operational_items.owner_name = 'Alice Smith'"
+        in compiled_filters
+    )
+    assert not any("operational_items.item_type" in c for c in compiled_filters)
+    assert len(session.query_instance.filters) == 2
+
+    assert len(session.query_instance.ordering) == 1
+    assert str(session.query_instance.ordering[0]) == "operational_items.created_at DESC"
+
+
+def test_find_overdue_for_owner_or_name_filters_and_ordering(monkeypatch):
+    now = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+    due_at = now - timedelta(days=2)
+    record = make_operational_record(
+        item_type=OperationalItemType.TASK,
+        owner_id="user-456",
+        owner_name="Bob Jones",
+        status=OperationalItemStatus.OPEN,
+        due_at=due_at,
+    )
+    session = FakeSession([record])
+    monkeypatch.setattr(
+        operational_module,
+        "SessionLocal",
+        lambda: session,
+    )
+
+    results = PostgreSQLOperationalItemRepository().find_overdue_for_owner_or_name(
+        now,
+        owner_id="user-456",
+        owner_name="Bob Jones",
+    )
+
+    assert len(results) == 1
+    assert isinstance(results[0], OperationalItem)
+    assert results[0].due_at == due_at
+    assert results[0].owner_id == "user-456"
+
+    compiled_filters = [compile_filter(f) for f in session.query_instance.filters]
+    assert "operational_items.due_at IS NOT NULL" in compiled_filters
+    assert any("operational_items.due_at < '2026-10-20 12:00:00" in c for c in compiled_filters)
+    assert "operational_items.status IN ('open', 'in_progress')" in compiled_filters
+    assert (
+        "operational_items.owner_id = 'user-456' OR operational_items.owner_name = 'Bob Jones'"
+        in compiled_filters
+    )
+    assert len(session.query_instance.filters) == 4
+
+    assert len(session.query_instance.ordering) == 1
+    assert str(session.query_instance.ordering[0]) == "operational_items.due_at ASC"
+
+
+def test_find_due_between_for_owner_or_name_filters_and_ordering(monkeypatch):
+    start = datetime(2026, 10, 10, 0, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 10, 20, 0, 0, tzinfo=timezone.utc)
+    due_at = datetime(2026, 10, 15, 0, 0, tzinfo=timezone.utc)
+    record = make_operational_record(
+        item_type=OperationalItemType.RISK,
+        owner_id="user-789",
+        owner_name="Charlie Brown",
+        status=OperationalItemStatus.IN_PROGRESS,
+        due_at=due_at,
+    )
+    session = FakeSession([record])
+    monkeypatch.setattr(
+        operational_module,
+        "SessionLocal",
+        lambda: session,
+    )
+
+    results = PostgreSQLOperationalItemRepository().find_due_between_for_owner_or_name(
+        start,
+        end,
+        owner_id="user-789",
+        owner_name="Charlie Brown",
+    )
+
+    assert len(results) == 1
+    assert isinstance(results[0], OperationalItem)
+    assert results[0].due_at == due_at
+    assert results[0].item_type == OperationalItemType.RISK
+
+    compiled_filters = [compile_filter(f) for f in session.query_instance.filters]
+    assert "operational_items.due_at IS NOT NULL" in compiled_filters
+    assert any("operational_items.due_at >= '2026-10-10 00:00:00" in c for c in compiled_filters)
+    assert any("operational_items.due_at <= '2026-10-20 00:00:00" in c for c in compiled_filters)
+    assert "operational_items.status IN ('open', 'in_progress')" in compiled_filters
+    assert (
+        "operational_items.owner_id = 'user-789' OR operational_items.owner_name = 'Charlie Brown'"
+        in compiled_filters
+    )
+    assert len(session.query_instance.filters) == 5
+
+    assert len(session.query_instance.ordering) == 1
+    assert str(session.query_instance.ordering[0]) == "operational_items.due_at ASC"
+
+
+def test_find_due_between_for_owner_or_name_accepts_start_equal_end(monkeypatch):
+    point = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
+    record = make_operational_record(
+        due_at=point,
+        owner_id="user-789",
+        owner_name="Charlie Brown",
+    )
+    session = FakeSession([record])
+    monkeypatch.setattr(
+        operational_module,
+        "SessionLocal",
+        lambda: session,
+    )
+
+    results = PostgreSQLOperationalItemRepository().find_due_between_for_owner_or_name(
+        point,
+        point,
+        owner_id="user-789",
+        owner_name="Charlie Brown",
+    )
+
+    assert len(results) == 1
+    compiled_filters = [compile_filter(f) for f in session.query_instance.filters]
+    assert any("operational_items.due_at >= '2026-10-15 12:00:00" in c for c in compiled_filters)
+    assert any("operational_items.due_at <= '2026-10-15 12:00:00" in c for c in compiled_filters)
+
+
+def test_find_due_between_for_owner_or_name_raises_value_error_before_session(monkeypatch):
+    start = datetime(2026, 10, 20, 0, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 10, 10, 0, 0, tzinfo=timezone.utc)
+
+    session_called = False
+
+    def fail_session():
+        nonlocal session_called
+        session_called = True
+        raise AssertionError("SessionLocal should not be called when start > end")
+
+    monkeypatch.setattr(operational_module, "SessionLocal", fail_session)
+
+    with pytest.raises(ValueError, match="start.*must not be after end"):
+        PostgreSQLOperationalItemRepository().find_due_between_for_owner_or_name(
+            start,
+            end,
+            owner_id="user-789",
+            owner_name="Charlie Brown",
+        )
+
+    assert not session_called
 
 
 def test_activity_save_persists_event_and_deduplicates_source(monkeypatch):

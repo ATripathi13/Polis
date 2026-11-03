@@ -52,6 +52,37 @@ class OperationalItemRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def find_open_for_owner_or_name(
+        self,
+        *,
+        owner_id: str,
+        owner_name: str,
+        item_type: OperationalItemType | None = None,
+    ) -> list[OperationalItem]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def find_overdue_for_owner_or_name(
+        self,
+        now: datetime,
+        *,
+        owner_id: str,
+        owner_name: str,
+    ) -> list[OperationalItem]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def find_due_between_for_owner_or_name(
+        self,
+        start: datetime,
+        end: datetime,
+        *,
+        owner_id: str,
+        owner_name: str,
+    ) -> list[OperationalItem]:
+        raise NotImplementedError
+
+    @abstractmethod
     def update_status(
         self,
         item_id: str,

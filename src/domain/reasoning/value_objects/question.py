@@ -16,6 +16,8 @@ class Question(ValueObject):
     context: ConversationContext | None = None
     target_user_id: str | None = None
     target_user_name: str | None = None
+    user_id: str | None = None
+    user_name: str | None = None
 
     def __post_init__(self) -> None:
         if not self.text.strip():

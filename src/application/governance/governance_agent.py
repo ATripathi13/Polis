@@ -110,12 +110,14 @@ class GovernanceAgent:
         knowledge_agent: Any | None = None,
         organization_event_repository: Any | None = None,
         enabled: bool = True,
+        approver_authorization_service: Any | None = None,
     ) -> None:
         self._repository = repository
         self._operations_agent = operations_agent
         self._knowledge_agent = knowledge_agent
         self._organization_event_repository = organization_event_repository
         self._enabled = enabled
+        self._approver_authorization_service = approver_authorization_service
 
     @property
     def enabled(self) -> bool:
@@ -124,6 +126,33 @@ class GovernanceAgent:
     @property
     def repository(self) -> GovernanceRepository:
         return self._repository
+
+    @property
+    def approver_authorization_service(self) -> Any | None:
+        return self._approver_authorization_service
+
+    def has_approver_authorization_path(self) -> bool:
+        """
+        Indicate whether an authoritative approver authorization mechanism is active.
+        """
+        return self._approver_authorization_service is not None
+
+    def is_authorized_approver(self, user_id: str, approval: ApprovalRequest) -> bool:
+        """
+        Verify if a given user is authorized to approve or reject the approval request.
+        """
+        if not user_id or not user_id.strip():
+            return False
+        # Self-approval is strictly forbidden in organizational governance
+        if approval.requester_id and approval.requester_id.strip() == user_id.strip():
+            return False
+
+        if self._approver_authorization_service is not None:
+            if hasattr(self._approver_authorization_service, "is_authorized_approver"):
+                return bool(self._approver_authorization_service.is_authorized_approver(user_id, approval))
+            if callable(self._approver_authorization_service):
+                return bool(self._approver_authorization_service(user_id, approval))
+        return False
 
     # =========================================================================
     # EVENT DISPATCH & LIFECYCLE MANAGEMENT
@@ -688,6 +717,9 @@ class GovernanceAgent:
 
     def get_pending_approvals(self) -> list[ApprovalRequest]:
         return self._repository.list_pending_approvals()
+
+    def find_approval(self, approval_id: str) -> ApprovalRequest | None:
+        return self._repository.find_approval(approval_id)
 
     def get_governance_state(self) -> dict[str, Any]:
         """

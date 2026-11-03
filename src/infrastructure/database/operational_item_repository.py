@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_
+from sqlalchemy import and_, or_
 
 from domain.common.identifier import Identifier
 from domain.operations import (
@@ -174,10 +174,15 @@ class PostgreSQLOperationalItemRepository(
                 )
 
             if owner_id is not None:
-                query = query.filter(
-                    OperationalItemModel.owner_id
-                    == owner_id
-                )
+                if isinstance(owner_id, (list, set, tuple)):
+                    query = query.filter(
+                        OperationalItemModel.owner_id.in_(list(owner_id))
+                    )
+                else:
+                    query = query.filter(
+                        OperationalItemModel.owner_id
+                        == owner_id
+                    )
 
             records = query.order_by(
                 OperationalItemModel.created_at.desc()
@@ -206,6 +211,139 @@ class PostgreSQLOperationalItemRepository(
                             OperationalItemStatus.IN_PROGRESS.value,
                         ]
                     ),
+                )
+                .order_by(
+                    OperationalItemModel.due_at.asc()
+                )
+                .all()
+            )
+
+            return [
+                self._to_domain(record)
+                for record in records
+            ]
+
+    def find_open_for_owner_or_name(
+        self,
+        *,
+        owner_id: str | list[str] | set[str] | tuple[str, ...],
+        owner_name: str,
+        item_type: OperationalItemType | None = None,
+    ) -> list[OperationalItem]:
+        with SessionLocal() as session:
+            owner_conditions = []
+            if owner_id:
+                if isinstance(owner_id, (list, set, tuple)):
+                    owner_conditions.append(OperationalItemModel.owner_id.in_(list(owner_id)))
+                else:
+                    owner_conditions.append(OperationalItemModel.owner_id == owner_id)
+            if owner_name and owner_name.strip():
+                owner_conditions.append(OperationalItemModel.owner_name == owner_name.strip())
+            if not owner_conditions:
+                return []
+
+            query = session.query(
+                OperationalItemModel
+            ).filter(
+                OperationalItemModel.status.in_(
+                    [
+                        OperationalItemStatus.OPEN.value,
+                        OperationalItemStatus.IN_PROGRESS.value,
+                    ]
+                ),
+                or_(*owner_conditions),
+            )
+
+            if item_type is not None:
+                query = query.filter(
+                    OperationalItemModel.item_type
+                    == item_type.value
+                )
+
+            records = query.order_by(
+                OperationalItemModel.created_at.desc()
+            ).all()
+
+            return [
+                self._to_domain(record)
+                for record in records
+            ]
+
+    def find_overdue_for_owner_or_name(
+        self,
+        now: datetime,
+        *,
+        owner_id: str,
+        owner_name: str,
+    ) -> list[OperationalItem]:
+        with SessionLocal() as session:
+            owner_conditions = []
+            if owner_id:
+                owner_conditions.append(OperationalItemModel.owner_id == owner_id)
+            if owner_name and owner_name.strip():
+                owner_conditions.append(OperationalItemModel.owner_name == owner_name.strip())
+            if not owner_conditions:
+                return []
+
+            records = (
+                session.query(OperationalItemModel)
+                .filter(
+                    OperationalItemModel.due_at.isnot(None),
+                    OperationalItemModel.due_at < now,
+                    OperationalItemModel.status.in_(
+                        [
+                            OperationalItemStatus.OPEN.value,
+                            OperationalItemStatus.IN_PROGRESS.value,
+                        ]
+                    ),
+                    or_(*owner_conditions),
+                )
+                .order_by(
+                    OperationalItemModel.due_at.asc()
+                )
+                .all()
+            )
+
+            return [
+                self._to_domain(record)
+                for record in records
+            ]
+
+    def find_due_between_for_owner_or_name(
+        self,
+        start: datetime,
+        end: datetime,
+        *,
+        owner_id: str,
+        owner_name: str,
+    ) -> list[OperationalItem]:
+        if start > end:
+            raise ValueError(
+                f"start ({start}) must not be after end ({end})"
+            )
+
+        with SessionLocal() as session:
+            owner_conditions = []
+            if owner_id:
+                owner_conditions.append(OperationalItemModel.owner_id == owner_id)
+            if owner_name and owner_name.strip():
+                owner_conditions.append(OperationalItemModel.owner_name == owner_name.strip())
+            if not owner_conditions:
+                return []
+
+            records = (
+                session.query(OperationalItemModel)
+                .filter(
+                    OperationalItemModel.due_at.isnot(None),
+                    OperationalItemModel.due_at >= start,
+                    OperationalItemModel.due_at <= end,
+                    OperationalItemModel.status.in_(
+                        [
+                            OperationalItemStatus.OPEN.value,
+                            OperationalItemStatus.IN_PROGRESS.value,
+                        ]
+                    ),
+                    or_(*owner_conditions),
                 )
                 .order_by(
                     OperationalItemModel.due_at.asc()

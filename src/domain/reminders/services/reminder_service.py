@@ -78,6 +78,15 @@ class ReminderService:
             target_user_id
         )
 
+    def find_active_for_target(
+        self,
+        target_user_id: str,
+    ) -> list[Reminder]:
+        """Find all active reminders for the specified target user."""
+        return self._repository.find_active_for_target(
+            target_user_id
+        )
+
     def mark_sent(
         self,
         reminder: Reminder,

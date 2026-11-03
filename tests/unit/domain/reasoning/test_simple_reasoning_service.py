@@ -115,8 +115,8 @@ def test_exact_phrase_containing_today_regression_a():
             display_name="AgenT",
         ),
         channel=Channel(
-            identity=CommunicationIdentity(internal_id="C0BG7NWMD6D"),
-            name="polis_tests",
+            identity=CommunicationIdentity(internal_id="C0C3J6618KC"),
+            name="test",
             channel_type="public",
         ),
         content=Content(
@@ -310,8 +310,8 @@ def test_named_person_grounding_regression_d():
             display_name="AgenT",
         ),
         channel=Channel(
-            identity=CommunicationIdentity(internal_id="C0BG7NWMD6D"),
-            name="polis_tests",
+            identity=CommunicationIdentity(internal_id="C0C3J6618KC"),
+            name="test",
             channel_type="public",
         ),
         content=Content(body="I am working on Publishing Calendar today - TEST 123"),

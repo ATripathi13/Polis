@@ -16,7 +16,10 @@ from .knowledge_ranker import (
     KnowledgeRanker,
 )
 
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 class KeywordRanker(
     KnowledgeRanker,
@@ -110,12 +113,12 @@ class KeywordRanker(
             )
 
             score = summary_score + (subject_score * 2)
-            print(
-                f"[RANKER] "
-                f"{candidate.summary!r} "
-                f"summary={summary_score} "
-                f"subject={subject_score} "
-                f"total={score}"
+            logger.debug(
+                "Ranker candidate evaluated: summary_score=%s, subject_score=%s, total=%s",
+                summary_score,
+                subject_score,
+                score,
+                extra={"operation": "rank_candidate", "score": score},
             )
             if score > best_score:
 
@@ -125,8 +128,9 @@ class KeywordRanker(
 
         if best_score <= 0:
             return None
-        print(
-            "[RANKER] BEST:",
-            best_candidate.summary if best_candidate else None,
+        logger.debug(
+            "Ranker selected best candidate with score %s",
+            best_score,
+            extra={"operation": "rank_candidate_best", "best_score": best_score},
         )
         return best_candidate

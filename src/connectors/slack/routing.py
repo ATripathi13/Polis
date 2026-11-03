@@ -37,7 +37,7 @@ def clean_slack_text(text: str, bot_user_id: str | None = None) -> str:
     # Strip explicit @polis mention token if present
     cleaned = re.sub(r"(?i)@polis\b", "", cleaned)
 
-    return cleaned.strip()
+    return cleaned.strip().lstrip(":,;—–- ").strip()
 
 
 def is_bot_mentioned(text: str, bot_user_id: str | None = None) -> bool:

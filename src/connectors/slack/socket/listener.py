@@ -33,6 +33,7 @@ from engines.slack.dto import (
 )
 from engines.slack.mapper import CommunicationMapper
 from engines.slack.router import SlackIntentRouter
+from engines.slack.router.slack_intent_router import _sanitize_error_message
 from engines.slack.services import (
     SlackClient,
     SlackIdentityService,
@@ -91,6 +92,9 @@ class SlackSocketListener:
         self._calendar_agent = calendar_agent
         self._identity_service = SlackIdentityService()
         self._deduplicator = EventDeduplicator()
+        self._lifecycle_state: str = "initialized"
+        self._stop_event: threading.Event = threading.Event()
+        self._reminder_worker_thread: threading.Thread | None = None
 
         os.environ.pop("SLACK_CLIENT_ID", None)
         os.environ.pop("SLACK_CLIENT_SECRET", None)
@@ -140,8 +144,7 @@ class SlackSocketListener:
         self._register_handlers()
 
     def _register_handlers(self) -> None:
-        @self._app.event("message")
-        async def handle_message(event, say):
+        async def handle_message(event, say=None):
             # Ignore bot messages to prevent loops.
             if event.get("bot_id"):
                 return
@@ -307,15 +310,26 @@ class SlackSocketListener:
 
             is_established_thread = False
             if thread_ts and self._conversation_repository is not None:
-                existing_context = self._conversation_repository.get(
-                    channel_id=channel_id,
-                    thread_ts=thread_ts,
-                )
-                if (
-                    existing_context is not None
-                    and any(msg.get("role") == "assistant" for msg in existing_context.history)
-                ):
-                    is_established_thread = True
+                try:
+                    existing_context = self._conversation_repository.get(
+                        channel_id=channel_id,
+                        thread_ts=thread_ts,
+                    )
+                    if (
+                        existing_context is not None
+                        and any(msg.get("role") == "assistant" for msg in existing_context.history)
+                    ):
+                        is_established_thread = True
+                except Exception:
+                    logger.warning(
+                        "Failed to check established thread state",
+                        extra={
+                            "operation": "check_established_thread",
+                            "channel_id": channel_id,
+                            "thread_ts": thread_ts,
+                        },
+                    )
+                    is_established_thread = False
 
             if not (is_direct or is_polis_mentioned or is_established_thread):
                 logger.info(
@@ -498,6 +512,23 @@ class SlackSocketListener:
                 )
                 return
 
+            from application.activity import ActivityDetector
+
+            activity_detector = getattr(self._activity_processor, "detector", None)
+            if not isinstance(activity_detector, ActivityDetector):
+                activity_detector = ActivityDetector()
+            detected_activity = activity_detector.detect(clean_text) or activity_detector.detect(text)
+            actionable_text = clean_text
+            if (
+                detected_activity is not None
+                and getattr(detected_activity, "has_substantive_query", False) is True
+                and isinstance(getattr(detected_activity, "substantive_query", None), str)
+            ):
+                actionable_text = clean_slack_text(
+                    text=detected_activity.substantive_query,
+                    bot_user_id=bot_user_id,
+                )
+
             # ======================================================
             # Reminder commands.
             #
@@ -507,24 +538,38 @@ class SlackSocketListener:
             # ======================================================
 
             if self._reminder_service is not None:
-                if clean_text.lower() == "stop":
-                    stopped_count = (
-                        self._reminder_service.stop_for_target(
-                            user_id,
+                if actionable_text.lower() == "stop":
+                    try:
+                        stopped_count = (
+                            self._reminder_service.stop_for_target(
+                                user_id,
+                            )
                         )
-                    )
+                        reply_text = (
+                            f"Stopped {stopped_count} active reminder"
+                            f"{'' if stopped_count == 1 else 's'}."
+                        )
+                    except Exception:
+                        logger.error(
+                            "Failed to stop reminders for user",
+                            extra={
+                                "operation": "stop_reminders",
+                                "user_id": user_id,
+                            },
+                        )
+                        reply_text = (
+                            "I encountered an error while trying to stop reminders. "
+                            "Please try again later."
+                        )
 
-                    reply_text = (
-                        f"Stopped {stopped_count} active reminder"
-                        f"{'' if stopped_count == 1 else 's'}."
-                    )
                     reply_thread_ts = thread_ts or ts
                     self._record_conversation_exchange(
                         channel_id=channel_id,
                         thread_ts=reply_thread_ts,
                         user_id=user_id,
-                        user_message=clean_text,
+                        user_message=text,
                         assistant_message=reply_text,
+                        is_thread=bool(thread_ts),
                     )
                     self._responder.reply(
                         channel=channel_id,
@@ -535,7 +580,7 @@ class SlackSocketListener:
 
                 reminder_match = re.match(
                     r"^remind\s+(.+?)\s+to\s+(.+)$",
-                    clean_text,
+                    actionable_text,
                     re.IGNORECASE,
                 )
 
@@ -570,30 +615,44 @@ class SlackSocketListener:
                         )
                         return
 
-                    self._reminder_service.create(
-                        target_user_id=target_user_id,
-                        creator_user_id=user_id,
-                        task=task,
-                        channel_id=channel_id,
-                        source_message_ts=ts,
-                        source_thread_ts=thread_ts,
-                        timezone_name=settings.reminder_timezone,
-                        time_1=settings.reminder_time_1,
-                        time_2=settings.reminder_time_2,
-                    )
+                    try:
+                        self._reminder_service.create(
+                            target_user_id=target_user_id,
+                            creator_user_id=user_id,
+                            task=task,
+                            channel_id=channel_id,
+                            source_message_ts=ts,
+                            source_thread_ts=thread_ts,
+                            timezone_name=settings.reminder_timezone,
+                            time_1=settings.reminder_time_1,
+                            time_2=settings.reminder_time_2,
+                        )
+                        reply_text = (
+                            "Done! I've set a reminder. "
+                            f"I'll remind <@{target_user_id}> twice daily "
+                            f"about: {task}"
+                        )
+                    except Exception:
+                        logger.error(
+                            "Failed to create reminder for user",
+                            extra={
+                                "operation": "create_reminder",
+                                "target_user_id": target_user_id,
+                            },
+                        )
+                        reply_text = (
+                            "I encountered an error while trying to set that reminder. "
+                            "Please try again later."
+                        )
 
-                    reply_text = (
-                        "Done! I've set a reminder. "
-                        f"I'll remind <@{target_user_id}> twice daily "
-                        f"about: {task}"
-                    )
                     reply_thread_ts = thread_ts or ts
                     self._record_conversation_exchange(
                         channel_id=channel_id,
                         thread_ts=reply_thread_ts,
                         user_id=user_id,
-                        user_message=clean_text,
+                        user_message=text,
                         assistant_message=reply_text,
+                        is_thread=bool(thread_ts),
                     )
                     self._responder.reply(
                         channel=channel_id,
@@ -607,13 +666,13 @@ class SlackSocketListener:
             if self._calendar_agent is not None:
                 try:
                     title_field_present = bool(
-                        re.search(r"(?im)^\s*[-*•]?\s*Title\s*:", clean_text)
+                        re.search(r"(?im)^\s*[-*•]?\s*Title\s*:", actionable_text)
                     )
                     extracted_title_present = bool(
-                        self._calendar_agent._extract_title(clean_text)
+                        self._calendar_agent._extract_title(actionable_text)
                     )
                     calendar_response = self._calendar_agent.handle_message(
-                        clean_text,
+                        actionable_text,
                         user_id=user_id,
                         channel_id=channel_id,
                     )
@@ -637,8 +696,9 @@ class SlackSocketListener:
                         channel_id=channel_id,
                         thread_ts=reply_thread_ts,
                         user_id=user_id,
-                        user_message=clean_text,
+                        user_message=text,
                         assistant_message=calendar_response,
+                        is_thread=bool(thread_ts),
                     )
                     self._responder.reply(
                         channel=channel_id,
@@ -655,7 +715,10 @@ class SlackSocketListener:
                 event_ts=activity_message.event_ts,
                 thread_ts=activity_message.thread_ts,
                 user_name=activity_message.user_name,
-                metadata=activity_message.metadata,
+                metadata={
+                    **activity_message.metadata,
+                    "original_text": text,
+                },
             )
 
             try:
@@ -681,6 +744,9 @@ class SlackSocketListener:
 
             return
 
+        self._app.event("message")(handle_message)
+        self._handle_message = handle_message
+
     def _record_conversation_exchange(
         self,
         channel_id: str,
@@ -688,6 +754,7 @@ class SlackSocketListener:
         user_id: str,
         user_message: str,
         assistant_message: str,
+        is_thread: bool = False,
     ) -> None:
         """
         Record a conversation exchange in the repository to establish thread state.
@@ -702,12 +769,14 @@ class SlackSocketListener:
             )
 
             is_dm = channel_id.startswith("D")
+            expected_thread = thread_ts if (is_thread or not is_dm) else None
             if context is None:
                 context = ConversationContext(
                     user_id=user_id,
                     channel_id=channel_id,
                     thread_ts=thread_ts,
                     channel_type="im" if is_dm else None,
+                    is_thread=is_thread,
                 )
             else:
                 if is_dm and context.user_id and context.user_id != user_id:
@@ -718,12 +787,19 @@ class SlackSocketListener:
                     )
                     return
 
+                valid_pending = context.get_pending_operation(
+                    expected_user_id=user_id,
+                    expected_channel_id=channel_id,
+                    expected_thread_ts=expected_thread,
+                )
                 context = ConversationContext(
                     user_id=context.user_id if is_dm else user_id,
                     channel_id=channel_id,
                     thread_ts=thread_ts,
                     history=context.history,
                     channel_type=context.channel_type or ("im" if is_dm else None),
+                    pending_operation=valid_pending,
+                    is_thread=is_thread,
                 )
 
             updated = context.add_exchange(
@@ -733,15 +809,17 @@ class SlackSocketListener:
             )
             self._conversation_repository.save(updated)
 
-        except Exception:
-            logger.exception(
-                "Failed to record conversation exchange for thread %s",
+        except Exception as exc:
+            logger.error(
+                "Failed to record conversation exchange for thread %s: %s",
                 thread_ts,
+                _sanitize_error_message(str(exc)),
+                extra={"operation": "record_conversation_exchange", "thread_ts": thread_ts},
             )
 
 
     def _run_reminder_worker(self) -> None:
-        while True:
+        while not self._stop_event.is_set():
             try:
                 if self._reminder_service is not None:
                     due_reminders = self._reminder_service.find_due()
@@ -780,37 +858,84 @@ class SlackSocketListener:
                                 extra={
                                     "reminder_id": str(reminder.graph_id),
                                     "target_user_id": reminder.target_user_id,
+                                    "operation": "deliver_reminder",
                                 },
                             )
 
                         except Exception:
-                            logger.exception(
-                                "Failed to deliver reminder %s",
-                                reminder.graph_id,
+                            logger.error(
+                                "Failed to deliver reminder",
+                                extra={
+                                    "reminder_id": str(reminder.graph_id),
+                                    "operation": "deliver_reminder_failure",
+                                },
                             )
 
             except Exception:
-                logger.exception(
+                logger.error(
                     "Reminder worker iteration failed",
+                    extra={"operation": "reminder_worker_iteration_failure"},
                 )
 
-            time.sleep(30)
+            self._stop_event.wait(timeout=30)
 
     async def start(self) -> None:
         """Start Slack Socket Mode."""
+        self._lifecycle_state = "running"
+        self._stop_event.clear()
         logger.info(
             "Starting Slack Socket Mode listener",
+            extra={"operation": "start_socket_listener", "lifecycle_state": self._lifecycle_state},
         )
 
-        reminder_worker = threading.Thread(
+        self._reminder_worker_thread = threading.Thread(
             target=self._run_reminder_worker,
             name="polis-reminder-worker",
             daemon=True,
         )
-        reminder_worker.start()
+        self._reminder_worker_thread.start()
 
-        await self._handler.start_async()
+        try:
+            await self._handler.start_async()
+        except asyncio.CancelledError:
+            logger.info(
+                "Slack Socket Mode handler execution cancelled",
+                extra={"operation": "handler_cancelled"},
+            )
+            raise
 
     async def stop(self) -> None:
-        """Stop Slack Socket Mode."""
-        await self._handler.close_async()
+        """Stop Slack Socket Mode listener idempotently using persistent lifecycle state."""
+        if self._lifecycle_state in ("stopping", "stopped"):
+            logger.info(
+                "Slack Socket Mode listener already in %s state; skipping stop",
+                self._lifecycle_state,
+                extra={"operation": "stop_socket_listener", "lifecycle_state": self._lifecycle_state},
+            )
+            return
+
+        self._lifecycle_state = "stopping"
+        logger.info(
+            "Stopping Slack Socket Mode listener",
+            extra={"operation": "stop_socket_listener", "lifecycle_state": self._lifecycle_state},
+        )
+
+        try:
+            self._stop_event.set()
+            if self._reminder_worker_thread is not None and self._reminder_worker_thread.is_alive():
+                self._reminder_worker_thread.join(timeout=2.0)
+
+            if self._handler is not None:
+                try:
+                    await self._handler.close_async()
+                except Exception:
+                    logger.warning(
+                        "Error closing Slack Socket Mode handler",
+                        extra={"operation": "close_socket_handler"},
+                    )
+        finally:
+            self._lifecycle_state = "stopped"
+            logger.info(
+                "Slack Socket Mode listener stopped",
+                extra={"operation": "stop_socket_listener", "lifecycle_state": self._lifecycle_state},
+            )

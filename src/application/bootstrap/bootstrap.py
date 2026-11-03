@@ -22,6 +22,7 @@ from infrastructure.storage import (
     MinIOKnowledgeBaseStorage,
 )
 from application.cognitive import (
+    CognitivePlanner,
     SimpleCognitiveEngine,
 )
 
@@ -40,6 +41,9 @@ from application.pipeline.pipeline import (
 )
 from application.services.knowledge_acceptance_service import (
     KnowledgeAcceptanceService,
+)
+from application.identity import (
+    CanonicalIdentityService,
 )
 from application.operations import (
     OperationalItemService,
@@ -417,7 +421,7 @@ def bootstrap(
             knowledge_registry,
         )
     )
-    
+
     reasoning = SimpleReasoningService(
         repository,
         communication_repository=communication_repository,
@@ -433,10 +437,16 @@ def bootstrap(
         organization_event_repository=organization_event_repository,
     )
 
+    slack_identity_service = SlackIdentityService()
+    canonical_identity_service = CanonicalIdentityService(
+        slack_identity_service=slack_identity_service,
+    )
+
     operations_agent = OperationsAgent(
         repository=operational_item_repository,
         operational_item_service=operational_item_service,
         reminder_service=reminder_service,
+        identity_service=canonical_identity_service,
     )
 
     governance_repository = PostgreSQLGovernanceRepository()
@@ -464,7 +474,6 @@ def bootstrap(
     )
 
     calendar_repository = PostgreSQLCalendarRepository()
-    slack_identity_service = SlackIdentityService()
     membership_provider = SlackMembershipDirectoryProvider(
         slack_identity_service=slack_identity_service,
     )
@@ -494,6 +503,8 @@ def bootstrap(
         max_attempts=settings.calendar_max_retry_attempts,
     )
 
+    planner = CognitivePlanner(llm_client=llm_client)
+
     engine = SimpleCognitiveEngine(
         pipeline,
         reasoning,
@@ -506,6 +517,9 @@ def bootstrap(
         governance_agent=governance_agent,
         meeting_intelligence_service=meeting_intelligence_service,
         calendar_agent=calendar_agent,
+        planner=planner,
+        operational_item_repository=operational_item_repository,
+        identity_resolver=slack_identity_service,
     )
     return ApplicationContainer(
         engine=engine,

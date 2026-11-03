@@ -28,6 +28,12 @@ from interfaces.api.models import (
     SlackEventRequest,
 )
 from infrastructure.config.settings import get_settings
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 class SlackConnector:
     """
     Receives Slack events and forwards
@@ -53,14 +59,11 @@ class SlackConnector:
         message: SlackMessage,
     ) -> None:
 
-        print(f"[SLACK] Incoming user : {message.user!r}")
-        print(
-            f"[SLACK] Bot user      : "
-            f"{self._settings.slack_bot_user_id!r}"
-        )
-        print(
-            f"[SLACK] Equal?        : "
-            f"{message.user == self._settings.slack_bot_user_id}"
+        logger.debug(
+            "SlackConnector received message from user %s (bot: %s)",
+            message.user,
+            self._settings.slack_bot_user_id,
+            extra={"operation": "slack_connector_receive", "user_id": message.user},
         )
 
         if message.user == self._settings.slack_bot_user_id:

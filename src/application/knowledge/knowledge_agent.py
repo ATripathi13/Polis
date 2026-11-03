@@ -96,52 +96,13 @@ class KnowledgeAgent:
             )
         )
 
-        kb_chunks = []
-        if self._retrieval_service is not None:
-            try:
-                kb_chunks = self._retrieval_service.retrieve(
-                    question_text,
-                    limit=limit,
-                    employee_slack_user_id=target_user,
-                )
-            except Exception as e:
-                logger.warning("Error retrieving from knowledge base: %s", e)
-                kb_chunks = []
-
-        domain_candidates = self._find_matching_domain_knowledge(question_text)
-
-        evidence_list: list[str] = []
-        sources_list: list[KnowledgeSourceReference] = []
-
-        for chunk, score in kb_chunks:
-            content = chunk.content.strip()
-            if not content:
-                continue
-            doc_name = chunk.metadata.get("document_name", "Unknown")
-            authority = chunk.metadata.get("authority")
-            evidence_str = (
-                f"Knowledge Base document: {doc_name} (Score: {score:.2f})\n{content}"
+        kb_chunks, domain_candidates, evidence_list, sources_list = (
+            self._gather_evidence_and_sources(
+                question_text,
+                target_user=target_user,
+                limit=limit,
             )
-            evidence_list.append(evidence_str)
-            sources_list.append(
-                KnowledgeSourceReference(
-                    source_type="knowledge_base",
-                    document_name=doc_name,
-                    authority=authority if isinstance(authority, str) else None,
-                    snippet=content[:200],
-                )
-            )
-
-        for cand in domain_candidates:
-            cand_evidence = f"Organizational Knowledge: {cand.subject.identifier}\n{cand.summary}"
-            evidence_list.append(cand_evidence)
-            sources_list.append(
-                KnowledgeSourceReference(
-                    source_type="domain_knowledge",
-                    document_name=cand.subject.identifier,
-                    snippet=cand.summary[:200],
-                )
-            )
+        )
 
         if not evidence_list:
             return KnowledgeResult(
@@ -204,6 +165,65 @@ class KnowledgeAgent:
             sources=sources_list,
         )
 
+    def _gather_evidence_and_sources(
+        self,
+        question_text: str,
+        target_user: str | None = None,
+        limit: int = 5,
+    ) -> tuple[list[tuple[Any, float]], list[Any], list[str], list[KnowledgeSourceReference]]:
+        """
+        Gather raw knowledge chunks and domain candidates, building formatted evidence strings
+        and source references without invoking LLM answer synthesis.
+        """
+        kb_chunks = []
+        if self._retrieval_service is not None:
+            try:
+                kb_chunks = self._retrieval_service.retrieve(
+                    question_text,
+                    limit=limit,
+                    employee_slack_user_id=target_user,
+                )
+            except Exception as e:
+                logger.warning("Error retrieving from knowledge base: %s", e)
+                kb_chunks = []
+
+        domain_candidates = self._find_matching_domain_knowledge(question_text)
+
+        evidence_list: list[str] = []
+        sources_list: list[KnowledgeSourceReference] = []
+
+        for chunk, score in kb_chunks:
+            content = chunk.content.strip()
+            if not content:
+                continue
+            doc_name = chunk.metadata.get("document_name", "Unknown")
+            authority = chunk.metadata.get("authority")
+            evidence_str = (
+                f"Knowledge Base document: {doc_name} (Score: {score:.2f})\n{content}"
+            )
+            evidence_list.append(evidence_str)
+            sources_list.append(
+                KnowledgeSourceReference(
+                    source_type="knowledge_base",
+                    document_name=doc_name,
+                    authority=authority if isinstance(authority, str) else None,
+                    snippet=content[:200],
+                )
+            )
+
+        for cand in domain_candidates:
+            cand_evidence = f"Organizational Knowledge: {cand.subject.identifier}\n{cand.summary}"
+            evidence_list.append(cand_evidence)
+            sources_list.append(
+                KnowledgeSourceReference(
+                    source_type="domain_knowledge",
+                    document_name=cand.subject.identifier,
+                    snippet=cand.summary[:200],
+                )
+            )
+
+        return kb_chunks, domain_candidates, evidence_list, sources_list
+
     def retrieve_evidence(
         self,
         question: Question | str,
@@ -211,7 +231,8 @@ class KnowledgeAgent:
         limit: int = 5,
     ) -> list[str]:
         """
-        Retrieve formatted knowledge evidence strings for POLIS unified answering.
+        Retrieve formatted knowledge evidence strings for POLIS unified answering
+        without performing redundant LLM answer generation.
         """
         if question is None:
             question_text = ""
@@ -223,8 +244,18 @@ class KnowledgeAgent:
         if not question_text:
             return []
 
-        result = self.ask(question_text, limit=limit)
-        return result.evidence
+        target_user = (
+            question.target_user_id
+            if isinstance(question, Question)
+            else None
+        )
+
+        _, _, evidence_list, _ = self._gather_evidence_and_sources(
+            question_text,
+            target_user=target_user,
+            limit=limit,
+        )
+        return evidence_list
 
     # =========================================================================
     # EVENT HANDLING

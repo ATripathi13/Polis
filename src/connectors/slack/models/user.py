@@ -25,6 +25,10 @@ class SlackUser:
         return Actor(
             identity=CommunicationIdentity(
                 internal_id=self.user_id,
+                external_ids={"slack": self.user_id},
+                metadata={"platform": "slack", "slack_user_id": self.user_id},
             ),
             display_name=self.username or self.user_id,
+            email=self.email,
+            metadata={"platform": "slack", "slack_user_id": self.user_id},
         )

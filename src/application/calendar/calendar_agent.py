@@ -712,3 +712,349 @@ class CalendarAgent:
 
         # Default fallback to the creator
         return CalendarAudienceType.INDIVIDUAL, fallback_user
+
+    # =========================================================================
+    # STRUCTURED CALENDAR EXECUTION (PHASE 3.3 STAGE B2)
+    # =========================================================================
+
+    def _resolve_datetime_param(
+        self,
+        parameters: dict[str, Any],
+        tz_name: str,
+    ) -> tuple[datetime | None, datetime | None]:
+        """
+        Resolve start_time and optional end_time from structured parameters.
+        Derives end_time from duration_minutes only when start_time and a valid
+        positive duration are present.
+        """
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception as err:
+            raise InvalidTimeRangeError(f"Invalid timezone: {tz_name}") from err
+
+        start_dt: datetime | None = None
+        raw_start = parameters.get("start_time")
+        if isinstance(raw_start, datetime):
+            start_dt = raw_start if raw_start.tzinfo is not None else raw_start.replace(tzinfo=tz)
+        elif isinstance(raw_start, str) and raw_start.strip():
+            clean_str = raw_start.strip()
+            try:
+                parsed = datetime.fromisoformat(clean_str)
+                start_dt = parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=tz)
+            except Exception:
+                start_dt = self._extract_datetime(clean_str)
+
+        if start_dt is None:
+            # Check dates and times collections or strings
+            raw_dates = parameters.get("dates") or parameters.get("date")
+            raw_times = parameters.get("times") or parameters.get("time")
+            if raw_dates and raw_times:
+                d_str = str(raw_dates[0] if isinstance(raw_dates, list) else raw_dates).strip()
+                t_str = str(raw_times[0] if isinstance(raw_times, list) else raw_times).strip()
+                try:
+                    d_parsed = date.fromisoformat(d_str)
+                    t_parsed = time.fromisoformat(t_str)
+                    start_dt = datetime.combine(d_parsed, t_parsed, tzinfo=tz)
+                except Exception:
+                    start_dt = self._extract_datetime(f"{d_str} {t_str}")
+                    if start_dt is None:
+                        start_dt = self._extract_datetime(f"{d_str} at {t_str}")
+
+        # Resolve end_dt
+        end_dt: datetime | None = None
+        raw_end = parameters.get("end_time")
+        if isinstance(raw_end, datetime):
+            end_dt = raw_end if raw_end.tzinfo is not None else raw_end.replace(tzinfo=tz)
+        elif isinstance(raw_end, str) and raw_end.strip():
+            clean_end = raw_end.strip()
+            try:
+                parsed_end = datetime.fromisoformat(clean_end)
+                end_dt = parsed_end if parsed_end.tzinfo is not None else parsed_end.replace(tzinfo=tz)
+            except Exception:
+                end_dt = self._extract_datetime(clean_end)
+
+        # Derive end_time from duration_minutes if end_time not provided
+        if end_dt is None and "duration_minutes" in parameters and parameters["duration_minutes"] is not None:
+            raw_duration = parameters["duration_minutes"]
+            try:
+                dur_mins = int(raw_duration)
+                if dur_mins <= 0:
+                    raise InvalidTimeRangeError("duration_minutes must be a positive integer.")
+                if start_dt is not None:
+                    end_dt = start_dt + timedelta(minutes=dur_mins)
+            except (ValueError, TypeError) as err:
+                raise InvalidTimeRangeError(f"duration_minutes must be a positive integer: {err}") from err
+
+        if start_dt is not None and end_dt is not None and end_dt < start_dt:
+            raise InvalidTimeRangeError("End time cannot precede start time.")
+
+        return start_dt, end_dt
+
+    def _resolve_audience_params(
+        self,
+        parameters: dict[str, Any],
+    ) -> tuple[CalendarAudienceType, str, str]:
+        """
+        Resolve audience type, identifier, and optional display name from parameters.
+        Enforces safeguards: does not invent audience or substitute requester.
+        """
+        raw_type = parameters.get("audience_type")
+        target_type: CalendarAudienceType | None = None
+        if isinstance(raw_type, CalendarAudienceType):
+            target_type = raw_type
+        elif isinstance(raw_type, str) and raw_type.strip():
+            try:
+                target_type = CalendarAudienceType(raw_type.strip().lower())
+            except ValueError as err:
+                raise InvalidAudienceError(
+                    f"Unsupported audience type: '{raw_type}'. "
+                    f"Supported types: individual, team, organization."
+                ) from err
+
+        # If audience_type was not explicitly given, check contextual fields
+        if target_type is None:
+            if parameters.get("team_names"):
+                target_type = CalendarAudienceType.TEAM
+            elif parameters.get("target_user_id") or parameters.get("employee_names"):
+                target_type = CalendarAudienceType.INDIVIDUAL
+
+        if target_type is None:
+            raise InvalidAudienceError("Audience type and identifier are required.")
+
+        # Resolve audience identifier
+        aud_id: str | None = parameters.get("audience_identifier") or parameters.get("audience_id")
+        if not aud_id or not str(aud_id).strip():
+            if target_type == CalendarAudienceType.TEAM and parameters.get("team_names"):
+                team_list = parameters["team_names"]
+                aud_id = team_list[0] if isinstance(team_list, list) and team_list else str(team_list)
+            elif target_type == CalendarAudienceType.INDIVIDUAL:
+                if parameters.get("target_user_id"):
+                    aud_id = str(parameters["target_user_id"])
+                elif parameters.get("employee_names"):
+                    emp_list = parameters["employee_names"]
+                    aud_id = emp_list[0] if isinstance(emp_list, list) and emp_list else str(emp_list)
+            elif target_type == CalendarAudienceType.ORGANIZATION:
+                aud_id = "organization"
+
+        if not aud_id or not str(aud_id).strip():
+            raise InvalidAudienceError(f"Audience identifier is required for '{target_type.value}' audience.")
+
+        display_name = str(parameters.get("display_name") or "").strip()
+        return target_type, str(aud_id).strip(), display_name
+
+    def create_entry_structured(
+        self,
+        parameters: dict[str, Any],
+        *,
+        user_id: str,
+    ) -> CalendarEntry:
+        """
+        Create a calendar entry from validated structured parameters.
+        """
+        if not user_id or not str(user_id).strip():
+            raise UnauthorizedCalendarActionError("Requester identity cannot be empty.")
+        clean_user_id = str(user_id).strip()
+
+        title = parameters.get("title") or parameters.get("event_title") or parameters.get("summary")
+        if not title or not str(title).strip():
+            raise InvalidCalendarEntryError("Calendar entry title cannot be empty.")
+        clean_title = str(title).strip()
+
+        tz_name = str(
+            parameters.get("timezone_name")
+            or parameters.get("timezone")
+            or self._default_timezone
+        ).strip()
+
+        start_dt, end_dt = self._resolve_datetime_param(parameters, tz_name)
+        if start_dt is None:
+            raise InvalidTimeRangeError("Valid start date and time are required.")
+
+        aud_type, aud_id, disp_name = self._resolve_audience_params(parameters)
+
+        raw_type = parameters.get("entry_type") or CalendarEntryType.ACTIVITY
+        if isinstance(raw_type, str):
+            try:
+                entry_type = CalendarEntryType(raw_type.strip().lower())
+            except ValueError as err:
+                raise InvalidCalendarEntryError(
+                    f"Invalid entry type '{raw_type}'. Must be activity, holiday, or announcement."
+                ) from err
+        else:
+            entry_type = raw_type
+
+        description = str(parameters.get("description") or parameters.get("details") or "").strip()
+        raw_meta = dict(parameters.get("metadata") or {})
+        # Protect system attributes from being overwritten by metadata
+        safe_meta = {
+            k: v for k, v in raw_meta.items()
+            if k not in ("creator_id", "entry_id", "version", "status", "created_at", "updated_at")
+        }
+
+        entry = self._service.create_entry(
+            title=clean_title,
+            description=description,
+            entry_type=entry_type,
+            creator_id=clean_user_id,
+            start_time=start_dt,
+            end_time=end_dt,
+            timezone_name=tz_name,
+            audience_type=aud_type,
+            audience_identifier=aud_id,
+            display_name=disp_name,
+            metadata=safe_meta,
+        )
+        return entry
+
+    def update_entry_structured(
+        self,
+        parameters: dict[str, Any],
+        *,
+        user_id: str,
+    ) -> CalendarEntry:
+        """
+        Update an existing calendar entry from validated structured parameters.
+        Enforces creator-only authorization via CalendarService.
+        """
+        if not user_id or not str(user_id).strip():
+            raise UnauthorizedCalendarActionError("Requester identity cannot be empty.")
+        clean_user_id = str(user_id).strip()
+
+        entry_id = parameters.get("entry_id") or parameters.get("item_reference")
+        if not entry_id or not str(entry_id).strip():
+            raise InvalidCalendarEntryError("entry_id is required for calendar updates.")
+        clean_entry_id = str(entry_id).strip()
+
+        # Check for invalid duration_minutes early if present
+        if "duration_minutes" in parameters and parameters["duration_minutes"] is not None:
+            try:
+                dur = int(parameters["duration_minutes"])
+                if dur <= 0:
+                    raise InvalidTimeRangeError("duration_minutes must be a positive integer.")
+            except (ValueError, TypeError) as err:
+                raise InvalidTimeRangeError(f"duration_minutes must be a positive integer: {err}") from err
+
+        raw_title = parameters.get("title") or parameters.get("event_title")
+        title = str(raw_title).strip() if raw_title is not None else None
+
+        raw_desc = parameters.get("description") or parameters.get("details")
+        description = str(raw_desc).strip() if raw_desc is not None else None
+
+        new_tz = parameters.get("timezone_name") or parameters.get("timezone")
+        if new_tz:
+            try:
+                ZoneInfo(str(new_tz).strip())
+                new_tz = str(new_tz).strip()
+            except Exception as err:
+                raise InvalidTimeRangeError(f"Invalid timezone: {new_tz}") from err
+
+        tz_for_calc = new_tz or self._default_timezone
+        new_start, new_end = self._resolve_datetime_param(parameters, tz_for_calc)
+
+        new_aud_type: CalendarAudienceType | None = None
+        new_aud_id: str | None = None
+        if any(k in parameters for k in ("audience_type", "audience_identifier", "audience_id", "team_names", "employee_names")):
+            new_aud_type, new_aud_id, _ = self._resolve_audience_params(parameters)
+
+        updated = self._service.update_entry(
+            entry_id=clean_entry_id,
+            requester_id=clean_user_id,
+            title=title,
+            description=description,
+            start_time=new_start,
+            end_time=new_end,
+            timezone_name=new_tz,
+            audience_type=new_aud_type,
+            audience_identifier=new_aud_id,
+        )
+        return updated
+
+    def cancel_entry_structured(
+        self,
+        parameters: dict[str, Any],
+        *,
+        user_id: str,
+    ) -> CalendarEntry:
+        """
+        Cancel a calendar entry from validated structured parameters.
+        Enforces creator-only authorization via CalendarService.
+        """
+        if not user_id or not str(user_id).strip():
+            raise UnauthorizedCalendarActionError("Requester identity cannot be empty.")
+        clean_user_id = str(user_id).strip()
+
+        entry_id = parameters.get("entry_id") or parameters.get("item_reference")
+        if not entry_id or not str(entry_id).strip():
+            raise InvalidCalendarEntryError("entry_id is required for calendar cancellation.")
+        clean_entry_id = str(entry_id).strip()
+
+        cancelled = self._service.cancel_entry(
+            entry_id=clean_entry_id,
+            requester_id=clean_user_id,
+        )
+        return cancelled
+
+    def format_confirmation(
+        self,
+        entry: CalendarEntry,
+        operation: str = "create",
+    ) -> str:
+        """Format an outcome confirmation message for a calendar mutation."""
+        op = operation.lower().strip()
+        if op in ("cancel", "cancel_event", "delete"):
+            return (
+                f"Done! I've cancelled it.\n\n"
+                f"🚫 Successfully cancelled *{entry.title}* (`{entry.entry_id}`). "
+                "Any pending reminders have been cancelled."
+            )
+
+        tz = ZoneInfo(entry.timezone)
+        if op in ("update", "update_event", "reschedule"):
+            start_str = entry.start_time.astimezone(tz).strftime("%Y-%m-%d %I:%M %p")
+            due_time = self._service.reminder_policy.calculate_due_time(entry.start_time).astimezone(tz)
+            due_str = due_time.strftime("%Y-%m-%d %I:%M %p")
+            return (
+                f"Done! I've updated the calendar.\n\n"
+                f"🔄 Successfully rescheduled *{entry.title}* (`{entry.entry_id}`):\n"
+                f"• *New Start:* {start_str} ({entry.timezone})\n"
+                f"• *New Reminder Due:* {due_str} ({entry.timezone})\n"
+                f"• *Version:* {entry.version} (prior pending reminders were cancelled and recalculated)."
+            )
+
+        # Default: create
+        local_start = entry.start_time.astimezone(tz)
+        start_str = local_start.strftime("%Y-%m-%d %I:%M %p")
+        due_time = self._service.reminder_policy.calculate_due_time(entry.start_time).astimezone(tz)
+        due_str = due_time.strftime("%Y-%m-%d %I:%M %p")
+        return (
+            f"Done! I've added it to the calendar.\n\n"
+            f"✅ Successfully scheduled *{entry.entry_type.value.capitalize()}*:\n"
+            f"• *Title:* {entry.title}\n"
+            f"• *ID:* `{entry.entry_id}`\n"
+            f"• *Scheduled Start:* {start_str} ({entry.timezone})\n"
+            f"• *Audience:* {self._format_audience(entry)}\n"
+            f"• *Reminder Scheduled:* {due_str} ({entry.timezone}) [exactly 15 hours before start]"
+        )
+
+    def execute_structured(
+        self,
+        action: str,
+        parameters: dict[str, Any],
+        *,
+        user_id: str,
+    ) -> str:
+        """
+        Execute a calendar action with structured parameters and return truthful confirmation.
+        """
+        act = action.lower().strip()
+        if act in ("create", "create_event", "schedule", "add"):
+            entry = self.create_entry_structured(parameters, user_id=user_id)
+            return self.format_confirmation(entry, operation="create")
+        elif act in ("update", "update_event", "reschedule", "modify"):
+            entry = self.update_entry_structured(parameters, user_id=user_id)
+            return self.format_confirmation(entry, operation="update")
+        elif act in ("cancel", "cancel_event", "delete", "remove"):
+            entry = self.cancel_entry_structured(parameters, user_id=user_id)
+            return self.format_confirmation(entry, operation="cancel")
+        else:
+            raise InvalidCalendarEntryError(f"Unsupported calendar action: '{action}'")

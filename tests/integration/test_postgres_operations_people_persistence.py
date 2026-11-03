@@ -5,8 +5,6 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from domain.activity import ActivitySource, ActivityType
 from domain.activity.aggregates.activity_event import ActivityEvent
@@ -17,12 +15,9 @@ from domain.operations import (
     OperationalItemStatus,
     OperationalItemType,
 )
-from infrastructure.database import activity_repository as activity_module
-from infrastructure.database import operational_item_repository as operational_module
 from infrastructure.database.models import (
     ActivityEventModel,
     OperationalItemModel,
-    Base,
 )
 from infrastructure.database.operational_item_repository import (
     PostgreSQLOperationalItemRepository,
@@ -33,60 +28,18 @@ from application.activity import ActivityService, AttendanceCalculator
 from application.operations import OperationsAgent, OperationalItemService
 from domain.observation import Observation, ObservationType
 from domain.organization import OrganizationEvent, OrganizationEventType
+from tests.staging_safety_gate import staging_safety_gate
 
 
 @pytest.fixture
-def postgres_repositories(monkeypatch):
-    """Use only the explicitly configured isolated polis_test database."""
-    database_url = os.environ.get("POLIS_TEST_DATABASE_URL")
-    if not database_url:
-        pytest.skip("Set POLIS_TEST_DATABASE_URL to the isolated polis_test URL.")
-
-    if not database_url.startswith("postgresql+psycopg://"):
-        pytest.fail("POLIS_TEST_DATABASE_URL must use postgresql+psycopg://")
-
-    from sqlalchemy.engine import make_url
-
-    parsed_url = make_url(database_url)
-    if parsed_url.host not in ("localhost", "127.0.0.1", "::1"):
-        pytest.fail("POLIS_TEST_DATABASE_URL must point to a local PostgreSQL host.")
-    if parsed_url.database != "polis_test":
-        pytest.fail("POLIS_TEST_DATABASE_URL must target the 'polis_test' database.")
-
-    engine = create_engine(database_url, pool_pre_ping=True)
-
-    try:
-        with engine.connect() as connection:
-            database_name = connection.exec_driver_sql(
-                "SELECT current_database()"
-            ).scalar_one()
-
-        if database_name != "polis_test":
-            pytest.fail(
-                f"Refusing to write to database {database_name!r}; "
-                "expected 'polis_test'."
-            )
-
-        Base.metadata.create_all(bind=engine)
-
-        TestSessionLocal = sessionmaker(
-            bind=engine,
-            autoflush=False,
-            autocommit=False,
-        )
-
-        monkeypatch.setattr(
-            operational_module, "SessionLocal", TestSessionLocal
-        )
-        monkeypatch.setattr(activity_module, "SessionLocal", TestSessionLocal)
-
-        yield (
-            PostgreSQLOperationalItemRepository(),
-            PostgreSQLActivityRepository(),
-            TestSessionLocal,
-        )
-    finally:
-        engine.dispose()
+def postgres_repositories(staging_safety_gate):
+    """Use only the explicitly configured and validated isolated polis_test database."""
+    _, session_factory = staging_safety_gate
+    yield (
+        PostgreSQLOperationalItemRepository(),
+        PostgreSQLActivityRepository(),
+        session_factory,
+    )
 
 
 def test_operational_item_round_trip_update_and_correlation(

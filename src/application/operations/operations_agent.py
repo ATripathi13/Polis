@@ -5,8 +5,9 @@ Operations Agent specialist intelligence implementation for POLIS.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from domain.common.identifier import Identifier
 from domain.operations import (
@@ -25,6 +26,7 @@ from domain.organization import (
     OrganizationEventType,
 )
 from domain.reasoning import Question
+from application.identity import IdentityResolutionStatus
 from application.operations.operational_item_service import OperationalItemService
 
 logger = logging.getLogger(__name__)
@@ -120,13 +122,16 @@ class OperationsAgent:
         repository: OperationalItemRepository,
         operational_item_service: OperationalItemService | None = None,
         reminder_service: Any | None = None,
+        identity_service: Any | None = None,
     ) -> None:
         self._repository = repository
-        self._service = (
-            operational_item_service
-            if operational_item_service is not None
-            else OperationalItemService(repository)
-        )
+        self._identity_service = identity_service
+        if operational_item_service is not None:
+            self._service = operational_item_service
+            if getattr(self._service, "_identity_service", None) is None:
+                self._service._identity_service = identity_service
+        else:
+            self._service = OperationalItemService(repository, identity_service=identity_service)
         self._reminder_service = reminder_service
 
     # =========================================================================
@@ -271,14 +276,31 @@ class OperationsAgent:
         correlation_id: str | None,
         item_id_hint: str | None,
     ) -> OperationsResult:
-        # Idempotency check: see if task with same source_event or hint exists
+        # Idempotency check: see if task with same source_event or explicit hint exists
         existing = self._find_existing_item(
             item_id=item_id_hint,
             source_type=source_type,
             source_event_id=source_event_id,
             item_type=OperationalItemType.TASK,
-            correlation_id=correlation_id,
+            correlation_id=None,
         )
+
+        # Cross-event deduplication: strictly require verified organization-wide scope on both
+        if existing is None:
+            incoming_is_org = any(
+                bool(
+                    getattr(obs, "metadata", {}).get("is_organization_wide")
+                    or getattr(obs, "metadata", {}).get("scope") == "organization"
+                    or getattr(obs, "metadata", {}).get("ownership_type") == "organization_wide"
+                )
+                for obs in event.observations
+            )
+            existing = self._find_duplicate_task(
+                summary=event.summary,
+                is_organization_wide=incoming_is_org,
+                source_type=source_type,
+                correlation_id=correlation_id,
+            )
 
         if existing is not None:
             return OperationsResult(
@@ -918,6 +940,39 @@ class OperationsAgent:
     # REMINDER INTEGRATION
     # =========================================================================
 
+    @property
+    def reminder_service(self) -> Any | None:
+        return self._reminder_service
+
+    def get_task(self, task_id: str) -> OperationalItem | None:
+        """Find an operational item by its identifier."""
+        return self._repository.find_by_id(task_id)
+
+    def find_active_reminders_for_target(self, target_user_id: str) -> list[Any]:
+        """Query active reminders for a specific target user."""
+        if self._reminder_service is None:
+            return []
+        finder = getattr(self._reminder_service, "find_active_for_target", None)
+        if finder is None and hasattr(self._reminder_service, "_repository"):
+            finder = getattr(self._reminder_service._repository, "find_active_for_target", None)
+        if callable(finder):
+            try:
+                return list(finder(target_user_id))
+            except Exception:
+                return []
+        return []
+
+    def find_active_task_reminder(self, task_id: str, target_user_id: str) -> Any | None:
+        """Find if an active reminder already exists for the given task and target user."""
+        task = self._repository.find_by_id(task_id)
+        if task is None:
+            return None
+        active_list = self.find_active_reminders_for_target(target_user_id)
+        for r in active_list:
+            if getattr(r, "task", None) == task.summary and getattr(r, "active", True):
+                return r
+        return None
+
     def schedule_task_reminder(
         self,
         task_id: str,
@@ -930,6 +985,7 @@ class OperationsAgent:
         timezone_name: str = "UTC",
         time_1: str = "09:00",
         time_2: str = "17:00",
+        allow_duplicate: bool = False,
     ) -> Any | None:
         """
         Schedule an explicit reminder for an operational task.
@@ -941,6 +997,37 @@ class OperationsAgent:
         task = self._repository.find_by_id(task_id)
         if task is None:
             raise OperationalItemNotFoundError(f"Task '{task_id}' not found.")
+
+        if task.status in (
+            OperationalItemStatus.COMPLETED,
+            OperationalItemStatus.CANCELLED,
+            OperationalItemStatus.CLOSED,
+        ):
+            raise InvalidLifecycleTransitionError(
+                f"Cannot schedule reminder for task '{task_id}' because it is in status '{task.status.value}'. "
+                "Reminders can only be scheduled for open tasks."
+            )
+
+        # Validate time format
+        try:
+            time.fromisoformat(time_1)
+            time.fromisoformat(time_2)
+        except (ValueError, TypeError) as err:
+            raise ValueError(
+                f"Invalid reminder time format '{time_1}' / '{time_2}'. Times must be HH:MM in 24-hour format."
+            ) from err
+
+        # Validate timezone
+        try:
+            ZoneInfo(timezone_name)
+        except Exception as err:
+            raise ValueError(f"Invalid timezone: '{timezone_name}'.") from err
+
+        # Idempotency check: if an active reminder already exists, return existing
+        if not allow_duplicate:
+            existing = self.find_active_task_reminder(task_id, target_user_id)
+            if existing is not None:
+                return existing
 
         return self._reminder_service.create(
             target_user_id=target_user_id,
@@ -1023,14 +1110,152 @@ class OperationsAgent:
             OrganizationEventType.RISK_IDENTIFIED,
         )
 
-    @staticmethod
-    def _extract_owner(event: OrganizationEvent) -> tuple[str, str]:
+    def _find_duplicate_task(
+        self,
+        summary: str,
+        *,
+        is_organization_wide: bool = False,
+        source_type: str = "",
+        correlation_id: str | None = None,
+    ) -> OperationalItem | None:
+        """
+        Find an existing open task to deduplicate cross-event ingestion.
+
+        Strict Rules:
+        - Only merge different source events when BOTH the existing and incoming
+          tasks have verified organization-wide scope, with matching normalized summaries.
+        - Never merge separate personal tasks based on calendar/holiday keywords alone.
+        """
+        if not is_organization_wide:
+            return None
+
+        norm_target = " ".join(summary.lower().strip().split())
+        if not norm_target:
+            return None
+
+        try:
+            open_tasks = self._repository.find_open(item_type=OperationalItemType.TASK)
+            for task in open_tasks:
+                existing_is_org = bool(
+                    task.metadata.get("is_organization_wide")
+                    or task.metadata.get("scope") == "organization"
+                    or task.metadata.get("ownership_type") == "organization_wide"
+                )
+                if not existing_is_org:
+                    continue
+
+                norm_task = " ".join(task.summary.lower().strip().split())
+                if norm_task == norm_target:
+                    return task
+        except Exception:
+            pass
+        return None
+
+    def _extract_owner(self, event: OrganizationEvent) -> tuple[str, str]:
+        """
+        Extract task owner based on strict evidentiary ownership rules (Rules A-E):
+        - Rule A: Explicit assignment -> resolve assignee identity.
+        - Rule B: Explicit self-commitment -> author becomes owner if verified.
+        - Rule C: Author without assignment -> author does NOT become owner.
+        - Rule D: Ambiguous assignment -> remains unassigned.
+        - Rule E: Organization-wide -> remains unassigned / organizational scope.
+
+        Resolution Fallback Rule:
+        When CanonicalIdentityService is configured but cannot resolve an employee,
+        do NOT persist the raw Slack or Teams ID as the canonical owner.
+        Preserve the item as unassigned (owner_id="", owner_name="").
+        The original identity evidence remains preserved in metadata.
+        """
+        identity_svc = getattr(self, "_identity_service", None)
+
         for obs in event.observations:
             meta = getattr(obs, "metadata", {}) or {}
-            owner_id = str(meta.get("owner_id") or meta.get("assignee") or meta.get("user_id") or "").strip()
-            owner_name = str(meta.get("owner_name") or meta.get("assignee_name") or "").strip()
-            if owner_id or owner_name:
-                return owner_id, owner_name
+
+            # Rule E: Organization-wide operations have no individual owner
+            if (
+                meta.get("is_organization_wide")
+                or meta.get("scope") == "organization"
+                or meta.get("ownership_type") == "organization_wide"
+            ):
+                return "", ""
+
+            ownership_type = str(meta.get("ownership_type", "")).strip().lower()
+
+            # Rule A: Explicit assignment to a named person or mention
+            candidate_assignee = str(meta.get("assignee") or meta.get("assignee_name") or "").strip()
+            if candidate_assignee:
+                if identity_svc is not None and hasattr(identity_svc, "resolve_user_by_name_or_mention"):
+                    resolved = identity_svc.resolve_user_by_name_or_mention(candidate_assignee)
+                    if (
+                        resolved is not None
+                        and getattr(resolved, "internal_id", None)
+                        and (
+                            getattr(resolved, "resolution_status", None) == IdentityResolutionStatus.RESOLVED
+                            or str(getattr(resolved, "resolution_status", "")).lower() == "resolved"
+                        )
+                    ):
+                        return resolved.internal_id, resolved.canonical_name
+                    # When identity service is configured but cannot resolve -> leave unassigned
+                    return "", ""
+
+                # When no identity service is configured (e.g. lightweight unit tests):
+                clean_candidate = candidate_assignee
+                if clean_candidate.startswith("<@") and clean_candidate.endswith(">"):
+                    clean_candidate = clean_candidate[2:-1].split("|", 1)[0]
+                assignee_name = str(meta.get("assignee_name") or candidate_assignee).strip()
+                return clean_candidate, assignee_name
+
+            # Rule B: Explicit self-commitment
+            if ownership_type == "self_commitment":
+                actor_id = str(meta.get("actor_id") or meta.get("user_id") or meta.get("owner_id") or "").strip()
+                actor_name = str(meta.get("actor_name") or meta.get("owner_name") or "").strip()
+                if actor_id:
+                    if identity_svc is not None and hasattr(identity_svc, "resolve_user"):
+                        resolved = identity_svc.resolve_user(actor_id, display_name_hint=actor_name)
+                        if (
+                            resolved is not None
+                            and getattr(resolved, "internal_id", None)
+                            and (
+                                getattr(resolved, "resolution_status", None) == IdentityResolutionStatus.RESOLVED
+                                or str(getattr(resolved, "resolution_status", "")).lower() == "resolved"
+                            )
+                        ):
+                            c_name = (
+                                resolved.canonical_name
+                                if (resolved.canonical_name and resolved.canonical_name != actor_id)
+                                else (actor_name or resolved.canonical_name or actor_id)
+                            )
+                            return resolved.internal_id, c_name
+                        # Identity service is configured but could not resolve employee -> leave unassigned
+                        return "", ""
+
+                    # When no identity service is configured:
+                    return actor_id, actor_name or actor_id
+
+            # Rule C: Author without assignment -> never default to author
+            # Rule D: Ambiguous or unassigned
+            if ownership_type in ("unassigned", "ambiguous"):
+                return "", ""
+
+            # Explicit pre-verified owner if present
+            explicit_id = str(meta.get("owner_id") or "").strip()
+            explicit_name = str(meta.get("owner_name") or "").strip()
+            if explicit_id:
+                if identity_svc is not None and hasattr(identity_svc, "resolve_user"):
+                    resolved = identity_svc.resolve_user(explicit_id, display_name_hint=explicit_name)
+                    if (
+                        resolved is not None
+                        and getattr(resolved, "internal_id", None)
+                        and (
+                            getattr(resolved, "resolution_status", None) == IdentityResolutionStatus.RESOLVED
+                            or str(getattr(resolved, "resolution_status", "")).lower() == "resolved"
+                        )
+                    ):
+                        return resolved.internal_id, resolved.canonical_name or explicit_name
+                    # When identity service is configured but cannot resolve -> leave unassigned
+                    return "", ""
+                return explicit_id, explicit_name or explicit_id
+
         return "", ""
 
     @staticmethod

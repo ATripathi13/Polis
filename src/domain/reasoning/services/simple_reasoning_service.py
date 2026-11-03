@@ -409,6 +409,7 @@ class SimpleReasoningService(
         recent_messages = context.history[-10:]
 
         formatted_messages: list[str] = []
+        last_valid_user: str | None = None
 
         for message in recent_messages:
             role = message.get("role", "")
@@ -424,14 +425,22 @@ class SimpleReasoningService(
                 if not current_user_id:
                     continue
 
-                # If message has no sender metadata or belongs to another user, omit
-                if not msg_user_id or msg_user_id != current_user_id:
-                    continue
-
                 if role == "user":
-                    formatted_messages.append(f"User: {content}")
+                    # Strictly isolate user messages: omit if missing sender metadata or belonging to another user
+                    if msg_user_id and msg_user_id == current_user_id:
+                        last_valid_user = current_user_id
+                        formatted_messages.append(f"User: {content}")
+                    else:
+                        last_valid_user = None
+                        continue
                 elif role == "assistant":
-                    formatted_messages.append(f"POLIS: {content}")
+                    # Assistant message: preserve if attributed to current user or responding to current user
+                    if msg_user_id and msg_user_id == current_user_id:
+                        formatted_messages.append(f"POLIS: {content}")
+                    elif not msg_user_id and last_valid_user == current_user_id:
+                        formatted_messages.append(f"POLIS: {content}")
+                    else:
+                        continue
             else:
                 # Shared channel / thread: multi-user continuity
                 if role == "user":
@@ -467,7 +476,11 @@ class SimpleReasoningService(
 
         text = question_text.strip().lower()
 
-        # Keep substantive questions out of the social-only fallback.
+        # When there is conversation history, allow follow-up questions and conversational continuity
+        if has_history:
+            return True
+
+        # Keep substantive questions out of the social-only fallback when there is no history.
         factual_request_patterns = (
             r"\bwhat\b.*\b(our|the|my|project|deadline|status|policy|date|time|decision|owner|task|plan|budget|database|driver|release|meeting)\b",
             r"\bwhen\b.*\b(launch|release|deadline|meeting|review|milestone|deployment)\b",
@@ -605,6 +618,9 @@ Instructions for messages without organizational document evidence:
   * Casual conversation: Be relaxed, approachable, and brief. Avoid formal greetings and unnecessary preamble.
   * Farewells: Acknowledge the wrap-up warmly (e.g. "Sounds good. We'll pick it up next time.") without forcing another task or question into a conversation that is ending.
   * Continuity: If the user says "Let's continue where we left off", use the conversation history to identify the next step. If the context is insufficient, ask a brief targeted question. Do not invent past tasks or conversations that are not in the context.
+- If the user's message refers to facts, projects, platforms, codes, or instructions mentioned earlier in the conversation history:
+  * Answer accurately, directly, and concisely using the information stated in the conversation history.
+  * If the requested information was NOT mentioned in the conversation history and is not available, acknowledge plainly that you don't have that information in this conversation.
 - If the user's message is asking for specific organizational facts, documents, databases, policies, or activities that are not in the conversation history:
   * Do not invent facts, projects, or events.
   * Clearly and plainly state in first person that you don't have enough information to answer that (e.g. "I don't have enough information to answer that confidently. Can you share a little more?").

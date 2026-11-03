@@ -5,6 +5,7 @@ Answer Value Object.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 
 from domain.common.value_object import ValueObject
@@ -25,6 +26,8 @@ class Answer(ValueObject):
     )
 
     is_conversational: bool = False
+    pending_operation: dict[str, Any] | Any | None = None
+    clear_pending: bool = False
 
     def __post_init__(self) -> None:
 

@@ -1,5 +1,9 @@
+import logging
+
 from domain.knowledge import KnowledgeRepository
 from memory.models.knowledge_record import KnowledgeRecord
+
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeAcceptanceService:
@@ -24,6 +28,10 @@ class KnowledgeAcceptanceService:
             validation_result
         )
 
-        print("[KNOWLEDGE ACCEPTED]", record)
+        logger.info(
+            "Knowledge record accepted (validation_id: %s)",
+            getattr(validation_result, "id", "unknown"),
+            extra={"operation": "knowledge_accepted"},
+        )
 
         return record
