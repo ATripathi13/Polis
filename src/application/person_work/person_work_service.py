@@ -206,7 +206,26 @@ class PersonWorkService:
                 if hasattr(comm.content, "metadata") and isinstance(comm.content.metadata, dict):
                     authorized_users.update(comm.content.metadata.get("authorized_users", []))
                 if hasattr(comm, "mentions") and isinstance(comm.mentions, list):
-                    authorized_users.update(comm.mentions)
+                    for m in comm.mentions:
+                        if isinstance(m, str):
+                            if m.strip():
+                                authorized_users.add(m.strip())
+                        elif hasattr(m, "identity"):
+                            ident = getattr(m, "identity", None)
+                            if isinstance(ident, dict):
+                                m_id = ident.get("internal_id")
+                            else:
+                                m_id = getattr(ident, "internal_id", None)
+                            if isinstance(m_id, str) and m_id.strip():
+                                authorized_users.add(m_id.strip())
+                        elif isinstance(m, dict):
+                            ident = m.get("identity")
+                            if isinstance(ident, dict):
+                                m_id = ident.get("internal_id")
+                            else:
+                                m_id = getattr(ident, "internal_id", None)
+                            if isinstance(m_id, str) and m_id.strip():
+                                authorized_users.add(m_id.strip())
 
                 if requester_user_id and requester_user_id not in authorized_users and requester_user_id not in ch_id:
                     continue

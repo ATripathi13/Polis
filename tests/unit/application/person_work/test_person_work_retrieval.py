@@ -33,6 +33,7 @@ from engines.communication.domain.value_objects import (
     Channel,
     CommunicationIdentity,
     Content,
+    Mention,
 )
 from engines.communication.infrastructure.repositories.memory_repository import (
     InMemoryCommunicationRepository,
@@ -49,7 +50,7 @@ def _build_comm_event(
     channel_type: str = "public",
     created_at: datetime | None = None,
     correlation_id: str | None = None,
-    mentions: list[str] | None = None,
+    mentions: list[Any] | None = None,
     metadata: dict | None = None,
 ) -> CommunicationEvent:
     now = created_at or datetime.now(timezone.utc)
@@ -427,3 +428,213 @@ class TestPersonWorkRetrieval:
 
         # Private item must be omitted
         assert not any("salary review" in item.work_item for item in summary.items)
+
+    def test_mention_objects_with_nested_dicts_do_not_raise_type_error(self, comm_repo, work_service):
+        """
+        Regression:
+        Mention objects with nested dictionaries (external_ids, metadata)
+        must not raise TypeError: unhashable type: 'dict' in private channels.
+        """
+        now = datetime.now(timezone.utc)
+        mention_with_dicts = Mention(
+            identity=CommunicationIdentity(
+                internal_id="U_COLLEAGUE",
+                external_ids={"slack": "U_COLLEAGUE", "email": "colleague@example.com"},
+                metadata={"role": "engineer", "department": "core"},
+            ),
+            display_name="Colleague Display Name",
+        )
+        comm_repo.save(
+            _build_comm_event(
+                "priv_msg_1",
+                "I am working on the database encryption module.",
+                "U_AKSHAT",
+                "Akshat",
+                channel_id="C_PRIVATE_SEC",
+                channel_type="private",
+                created_at=now - timedelta(hours=1),
+                mentions=[mention_with_dicts],
+            )
+        )
+
+        # Query by the mentioned user - must succeed without TypeError
+        summary = work_service.get_person_work_summary(
+            target_user_id="U_AKSHAT",
+            target_user_name="Akshat",
+            requester_user_id="U_COLLEAGUE",
+            requester_channel_type="private",
+        )
+        assert any("database encryption module" in item.work_item for item in summary.active_work)
+
+    def test_valid_mention_identity_added_to_authorization_set(self, comm_repo, work_service):
+        """
+        Mentioned user's internal_id allows them to access work communicated in private channels.
+        """
+        now = datetime.now(timezone.utc)
+        comm_repo.save(
+            _build_comm_event(
+                "priv_msg_auth",
+                "I am working on the caching layers.",
+                "U_HEMANT",
+                "Hemant",
+                channel_id="C_PRIVATE_PERF",
+                channel_type="private",
+                created_at=now - timedelta(hours=1),
+                mentions=[
+                    Mention(
+                        identity=CommunicationIdentity(
+                            internal_id="U_VIJAY",
+                            external_ids={"slack": "U_VIJAY"},
+                        ),
+                        display_name="Vijay",
+                    )
+                ],
+            )
+        )
+
+        # U_VIJAY was mentioned, so U_VIJAY is authorized
+        summary_auth = work_service.get_person_work_summary(
+            target_user_id="U_HEMANT",
+            target_user_name="Hemant",
+            requester_user_id="U_VIJAY",
+            requester_channel_type="private",
+        )
+        assert any("caching layers" in item.work_item for item in summary_auth.active_work)
+
+    def test_missing_or_malformed_mention_identities_safely_ignored(self, comm_repo, work_service):
+        """
+        Missing, empty, or malformed mention identities must not crash
+        and must never authorize unauthorized users. Display names must not be used as auth IDs.
+        """
+        now = datetime.now(timezone.utc)
+        mock_bad_mention_1 = MagicMock()
+        mock_bad_mention_1.identity = None
+        mock_bad_mention_1.display_name = "U_UNAUTHORIZED"
+
+        mock_bad_mention_2 = MagicMock(spec=[])  # no identity attribute at all
+
+        mock_bad_mention_3 = MagicMock()
+        mock_bad_mention_3.identity = MagicMock()
+        mock_bad_mention_3.identity.internal_id = "   "  # whitespace-only ID
+
+        mock_bad_mention_4 = MagicMock()
+        mock_bad_mention_4.identity = MagicMock()
+        mock_bad_mention_4.identity.internal_id = None  # None ID
+
+        comm_repo.save(
+            _build_comm_event(
+                "priv_msg_malformed",
+                "I am working on the auth middleware.",
+                "U_HEMANT",
+                "Hemant",
+                channel_id="C_PRIVATE_AUTH",
+                channel_type="private",
+                created_at=now - timedelta(hours=1),
+                mentions=[
+                    mock_bad_mention_1,
+                    mock_bad_mention_2,
+                    mock_bad_mention_3,
+                    mock_bad_mention_4,
+                    None,  # None element
+                    12345,  # non-object element
+                ],
+            )
+        )
+
+        # Query by unauthorized user whose ID happens to match display_name of bad mention 1
+        summary = work_service.get_person_work_summary(
+            target_user_id="U_HEMANT",
+            target_user_name="Hemant",
+            requester_user_id="U_UNAUTHORIZED",
+            requester_channel_type="private",
+        )
+        assert not any("auth middleware" in item.work_item for item in summary.items)
+
+    def test_unauthorized_requester_excluded_from_private_channel_evidence(self, comm_repo, work_service):
+        """
+        An unauthorized requester not in actor, channel id, members, or mentions
+        cannot access private channel evidence.
+        """
+        now = datetime.now(timezone.utc)
+        comm_repo.save(
+            _build_comm_event(
+                "priv_msg_secret",
+                "I am auditing security vulnerabilities in backend API.",
+                "U_AKSHAT",
+                "Akshat",
+                channel_id="C_PRIVATE_AUDIT",
+                channel_type="private",
+                created_at=now - timedelta(hours=1),
+                mentions=[
+                    Mention(
+                        identity=CommunicationIdentity(
+                            internal_id="U_HEMANT",
+                            external_ids={"slack": "U_HEMANT"},
+                        ),
+                        display_name="Hemant",
+                    )
+                ],
+            )
+        )
+
+        # U_STRANGER is not mentioned, not actor, not in channel
+        summary = work_service.get_person_work_summary(
+            target_user_id="U_AKSHAT",
+            target_user_name="Akshat",
+            requester_user_id="U_STRANGER",
+            requester_channel_type="private",
+        )
+        assert not any("security vulnerabilities" in item.work_item for item in summary.items)
+
+    def test_public_channel_and_dm_permissions_remain_unchanged(self, comm_repo, work_service):
+        """
+        Existing public-channel access and DM boundary protections remain intact:
+        1. Public channel work is accessible to any requester.
+        2. Inaccessible private/DM work is never used to answer a public-channel query.
+        3. DM participant (actor or member) can view work when querying in private/DM context.
+        """
+        now = datetime.now(timezone.utc)
+        # Public message
+        comm_repo.save(
+            _build_comm_event(
+                "pub_msg_1",
+                "I am developing the public landing page.",
+                "U_GURKIRAT",
+                "Gurkirat",
+                channel_id="C_GENERAL",
+                channel_type="public",
+                created_at=now - timedelta(hours=1),
+            )
+        )
+        # DM message between Gurkirat and Hemant
+        comm_repo.save(
+            _build_comm_event(
+                "dm_msg_1",
+                "I am working on the private compensation adjustment.",
+                "U_GURKIRAT",
+                "Gurkirat",
+                channel_id="D_U_GURKIRAT_U_HEMANT",
+                channel_type="im",
+                created_at=now - timedelta(hours=1),
+            )
+        )
+
+        # 1. Any requester in public channel sees public work
+        summary_pub = work_service.get_person_work_summary(
+            target_user_id="U_GURKIRAT",
+            target_user_name="Gurkirat",
+            requester_user_id="U_RANDOM",
+            requester_channel_type="public",
+        )
+        assert any("public landing page" in item.work_item for item in summary_pub.active_work)
+        # But NOT private DM work
+        assert not any("compensation adjustment" in item.work_item for item in summary_pub.items)
+
+        # 2. DM participant (Hemant, channel_id contains U_HEMANT) sees DM work
+        summary_dm = work_service.get_person_work_summary(
+            target_user_id="U_GURKIRAT",
+            target_user_name="Gurkirat",
+            requester_user_id="U_HEMANT",
+            requester_channel_type="im",
+        )
+        assert any("compensation adjustment" in item.work_item for item in summary_dm.active_work)
