@@ -116,6 +116,34 @@ class CognitivePlanner:
         self._default_timezone = default_timezone or ZoneInfo("Asia/Kolkata")
         self._identity_service = identity_service
 
+    def _is_bot_user(self, val: str | None, label: str | None = None) -> bool:
+        if not val:
+            return False
+        clean = val.strip().lower()
+        if clean in ("u_bot", "ubot", "polis", "bot", "here", "channel", "everyone"):
+            return True
+        if label and label.strip().lower() in ("polis", "bot", "polis bot"):
+            return True
+        try:
+            from infrastructure.config.settings import get_settings
+            bot_id = (get_settings().slack_bot_user_id or "").lower()
+            if bot_id and clean == bot_id:
+                return True
+        except Exception:
+            pass
+        if self._identity_service and hasattr(self._identity_service, "get_workspace_users"):
+            try:
+                for u in self._identity_service.get_workspace_users():
+                    if (u.get("id") or "").lower() == clean:
+                        uname = (u.get("name") or "").lower()
+                        udisp = (u.get("profile", {}).get("display_name") or "").lower()
+                        ureal = (u.get("real_name") or "").lower()
+                        if u.get("is_bot") or uname == "polis" or udisp == "polis" or "polis bot" in ureal:
+                            return True
+            except Exception:
+                pass
+        return False
+
     def plan(
         self,
         question: Question | str,
@@ -627,18 +655,22 @@ class CognitivePlanner:
         )
 
         other_work_patterns = (
-            r"\bwhat\s+is\s+(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)\s+(?:currently\s+)?working\s+on\b",
-            r"\bwhat\s+is\s+(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)\s+blocked\s+on\b",
-            r"\bwhat\s+(?:tasks\s+)?has\s+(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)\s+(?:handled|completed|done|worked\s+on)(?:\s+recently|\s+this\s+week)?\b",
-            r"\bwhat\s+has\s+(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)\s+completed(?:\s+recently|\s+this\s+week)?\b",
-            r"\b(?:give\s+me\s+a\s+)?(?:summary\s+of\s+)?(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)'s\s+(?:current\s+)?(?:work|priorities|recent\s+work|tasks)\b",
-            r"\bsummarize\s+(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)(?:'s)?\s+(?:recent\s+)?work(?:\s+from\s+slack)?\b",
+            r"\bwhat\s+is\s+(?:<@[a-z0-9_|.-]+>|@?[a-z0-9_.-]+)\s+(?:currently\s+)?working\s+on\b",
+            r"\bwhat\s+is\s+(?:<@[a-z0-9_|.-]+>|@?[a-z0-9_.-]+)\s+blocked\s+on\b",
+            r"\bwhat\s+(?:tasks\s+)?has\s+(?:<@[a-z0-9_|.-]+>|@?[a-z0-9_.-]+)\s+(?:handled|completed|done|worked\s+on)(?:\s+recently|\s+this\s+week)?\b",
+            r"\bwhat\s+has\s+(?:<@[a-z0-9_|.-]+>|@?[a-z0-9_.-]+)\s+completed(?:\s+recently|\s+this\s+week)?\b",
+            r"\b(?:give\s+me\s+a\s+)?(?:summary\s+of\s+)?(?:<@[a-z0-9_|.-]+>|@?[a-z0-9_.-]+)'s\s+(?:current\s+)?(?:work|priorities|recent\s+work|tasks)\b",
+            r"\bsummarize\s+(?:<@[a-z0-9_|.-]+>|@?[a-z0-9_.-]+)(?:'s)?\s+(?:recent\s+|current\s+)?work(?:\s+from\s+slack)?\b",
             r"\bwhat\s+is\s+this\s+person\s+(?:currently\s+)?(?:working|blocked)\s+on\b",
             r"\bwhat\s+is\s+this\s+person\s+working\s+on\b",
+            # Leading mention patterns: e.g. "@Hemant, summarize his recent work", "<@U_HEMANT>, what is he working on?"
+            r"^(?:<@[a-z0-9_|.-]+>|@?[a-z0-9_.-]+)\s*[,:]?\s*(?:summarize\s+(?:his|her|their|the)\s+(?:recent\s+|current\s+)?work|what\s+(?:is|are)\s+(?:he|she|they)\s+(?:currently\s+)?working\s+on|what\s+(?:has\s+he|has\s+she|have\s+they)\s+(?:completed|done|worked\s+on)|what\s+(?:is|are)\s+(?:he|she|they)\s+blocked\s+on)\b",
+            r"^(?:<@[a-z0-9_|.-]+>|@?[a-z0-9_.-]+)\s*[,:]?\s*(?:give\s+me\s+a\s+)?(?:summary\s+of\s+)?(?:his|her|their|the)\s+(?:recent\s+|current\s+)?work\b",
+            r"^(?:<@[a-z0-9_|.-]+>|@?[a-z0-9_.-]+)\s*[,:]?\s*(?:current\s+work|recent\s+work|status|updates?)\b",
             # Availability, schedule, and sign-off queries
-            r"\b(?:is|has)\s+(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)\s+(?:available|online|signed\s+off|on\s+break|taking\s+a\s+break)\b",
-            r"\bwhen\s+did\s+(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)\s+(?:sign\s+off|leave|step\s+away)\b",
-            r"\bwhat\s+is\s+(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)'s\s+(?:schedule|availability|working\s+hours|status)\b",
+            r"\b(?:is|has)\s+(?:<@[a-z0-9_|.-]+>|@?[a-z0-9_.-]+)\s+(?:available|online|signed\s+off|on\s+break|taking\s+a\s+break)\b",
+            r"\bwhen\s+did\s+(?:<@[a-z0-9_|.-]+>|@?[a-z0-9_.-]+)\s+(?:sign\s+off|leave|step\s+away)\b",
+            r"\bwhat\s+is\s+(?:<@[a-z0-9_|.-]+>|@?[a-z0-9_.-]+)'s\s+(?:schedule|availability|working\s+hours|status)\b",
             # Follow-up pronoun and anaphoric continuity patterns
             r"\bwhat\s+(?:has\s+he|has\s+she|have\s+they|did\s+he|did\s+she)\s+(?:completed|done|finished|worked\s+on|handled)(?:\s+recently|\s+this\s+week)?\b",
             r"\bwhat\s+(?:is|are)\s+(?:he|she|they)\s+(?:currently\s+)?working\s+on\b",
@@ -667,9 +699,33 @@ class CognitivePlanner:
             effective_target_name = None
         else:
             named_person = None
-            if extracted.employee_names:
-                named_person = extracted.employee_names[0]
-            elif any(p in norm for p in ("he", "him", "his", "she", "her", "they", "them", "their", "this person", "that person", "still pending", "remaining", "what has changed", "what progress")):
+            slack_mention_matches = list(re.finditer(r"<@([a-zA-Z0-9_.-]+)(?:\|([^>]+))?>", text))
+            for sm in slack_mention_matches:
+                m_uid = sm.group(1)
+                m_label = sm.group(2)
+                if self._is_bot_user(m_uid, m_label):
+                    continue
+                named_person = m_uid
+                if not effective_target_id:
+                    effective_target_id = m_uid
+                break
+
+            # Plain-text @mention scoped to employee-work query processing
+            if not named_person:
+                at_matches = list(re.finditer(r"@([a-zA-Z0-9_.-]+)", text))
+                for am in at_matches:
+                    am_name = am.group(1)
+                    if self._is_bot_user(am_name) or am_name.lower() in ("channel", "here", "everyone"):
+                        continue
+                    named_person = am_name
+                    break
+
+            if not named_person and extracted.employee_names:
+                for en in extracted.employee_names:
+                    if not self._is_bot_user(en):
+                        named_person = en
+                        break
+            elif not named_person and any(p in norm for p in ("he", "him", "his", "she", "her", "they", "them", "their", "this person", "that person", "still pending", "remaining", "what has changed", "what progress")):
                 if ctx and getattr(ctx, "history", None):
                     for msg in reversed(ctx.history):
                         meta = msg.get("metadata") if isinstance(msg.get("metadata"), dict) else {}
@@ -709,19 +765,28 @@ class CognitivePlanner:
                 named_person = named_person or "this person"
 
             if named_person and not effective_target_id:
-                if named_person.startswith("U") and len(named_person) >= 8 and named_person[1:].isalnum():
-                    effective_target_id = named_person
+                clean_name = named_person.lstrip("@").strip()
+                if (clean_name.startswith("U") or clean_name.startswith("W")) and len(clean_name) >= 5 and re.match(r"^[UW][A-Za-z0-9_.-]+$", clean_name):
+                    effective_target_id = clean_name
+                    effective_target_name = clean_name
                 elif self._identity_service is not None:
                     try:
                         users = self._identity_service.get_workspace_users()
                         matches = []
+                        # 1. Exact ID match
                         for u in users:
-                            disp = u.get("profile", {}).get("display_name") or ""
-                            real = u.get("real_name") or ""
-                            uname = u.get("name") or ""
-                            candidates = {disp.lower(), real.lower(), uname.lower()}
-                            if any(named_person.lower() == c or named_person.lower() in c.split() for c in candidates if c):
-                                matches.append(u)
+                            if u.get("id") == clean_name:
+                                matches = [u]
+                                break
+                        # 2. Name matches
+                        if not matches:
+                            for u in users:
+                                disp = u.get("profile", {}).get("display_name") or ""
+                                real = u.get("real_name") or ""
+                                uname = u.get("name") or ""
+                                candidates = {disp.lower(), real.lower(), uname.lower()}
+                                if any(clean_name.lower() == c or clean_name.lower() in c.split() for c in candidates if c):
+                                    matches.append(u)
 
                         if len(matches) > 1:
                             candidate_names = [
@@ -752,12 +817,32 @@ class CognitivePlanner:
                                 or matches[0].get("name")
                             )
                         else:
-                            effective_target_name = named_person
+                            effective_target_name = clean_name
                     except Exception as err:
                         logger.warning("Identity lookup in planner failed: %s", err)
-                        effective_target_name = named_person
+                        effective_target_name = clean_name
                 else:
-                    effective_target_name = named_person
+                    effective_target_name = clean_name
+
+            if effective_target_id and (not effective_target_name or effective_target_name == effective_target_id):
+                if self._identity_service is not None:
+                    try:
+                        if hasattr(self._identity_service, "get_display_name"):
+                            resolved = self._identity_service.get_display_name(effective_target_id)
+                            if resolved and resolved != effective_target_id:
+                                effective_target_name = resolved
+                        if not effective_target_name or effective_target_name == effective_target_id:
+                            if hasattr(self._identity_service, "get_workspace_users"):
+                                for u in self._identity_service.get_workspace_users():
+                                    if u.get("id") == effective_target_id:
+                                        effective_target_name = (
+                                            u.get("profile", {}).get("display_name")
+                                            or u.get("real_name")
+                                            or u.get("name")
+                                        )
+                                        break
+                    except Exception as err:
+                        logger.warning("Identity lookup for target_user_id %s failed: %s", effective_target_id, err)
 
         target_display = effective_target_name or effective_target_id or ("you" if is_self else "employee")
         extracted_copy = extracted.model_copy()
@@ -1753,10 +1838,15 @@ class CognitivePlanner:
                 duration_minutes = val
 
         # Employee names / Slack mentions
-        slack_mentions = re.findall(r"<@([A-Z0-9]+)>", text)
-        for sm in slack_mentions:
-            if sm not in employee_names:
-                employee_names.append(sm)
+        slack_mentions = re.findall(r"<@([a-zA-Z0-9_.-]+)(?:\|([^>]+))?>", text)
+        for sm_id, sm_label in slack_mentions:
+            if sm_id.lower() in ("u_bot", "ubot", "polis", "here", "channel", "everyone"):
+                continue
+            if sm_label and sm_label.lower() in ("polis", "bot", "polis bot"):
+                continue
+            if sm_id not in employee_names:
+                employee_names.append(sm_id)
+
 
         name_with_match = re.findall(
             r"\b(?:with|assigned\s+to|for)\s+([A-Z][a-z]+)\b",
@@ -1768,13 +1858,14 @@ class CognitivePlanner:
 
         # Work / task person query names: e.g. "What is Akshat working on?", "What has Gurkirat completed?"
         work_name_patterns = (
-            r"\bwhat\s+is\s+([A-Z][a-z]+)\s+(?:currently\s+)?(?:working|blocked)\b",
-            r"\bwhat\s+(?:tasks\s+)?has\s+([A-Z][a-z]+)\s+(?:handled|completed|done|worked\s+on)\b",
-            r"\bwhat\s+has\s+([A-Z][a-z]+)\s+completed\b",
-            r"\b(?:about|on)\s+([A-Z][a-z]+)(?:'s)?\s+(?:tasks?|work|priorities|blockers?)\b",
-            r"\b([A-Z][a-z]+)'s\s+(?:tasks?|work|priorities|blockers?|activities|updates?)\b",
-            r"\b(?:summarize|summary\s+of)\s+([A-Z][a-z]+)(?:'s)?\s+(?:work|tasks?|priorities)\b",
-            r"\bwhat\s+is\s+([A-Z][a-z]+)\s+working\s+on\b",
+            r"\bwhat\s+is\s+@?([A-Za-z0-9_.-]+)\s+(?:currently\s+)?(?:working|blocked)\b",
+            r"\bwhat\s+(?:tasks\s+)?has\s+@?([A-Za-z0-9_.-]+)\s+(?:handled|completed|done|worked\s+on)\b",
+            r"\bwhat\s+has\s+@?([A-Za-z0-9_.-]+)\s+completed\b",
+            r"\b(?:about|on)\s+@?([A-Za-z0-9_.-]+)(?:'s)?\s+(?:tasks?|work|priorities|blockers?)\b",
+            r"\b@?([A-Za-z0-9_.-]+)'s\s+(?:tasks?|work|priorities|blockers?|activities|updates?)\b",
+            r"\b(?:summarize|summary\s+of)\s+@?([A-Za-z0-9_.-]+)(?:'s)?\s+(?:work|tasks?|priorities)\b",
+            r"\bwhat\s+is\s+@?([A-Za-z0-9_.-]+)\s+working\s+on\b",
+            r"^(?:<@[a-zA-Z0-9_|.-]+>|@([A-Za-z0-9_.-]+))\s*[,:]?\s*(?:summarize\s+(?:his|her|their|the)\s+(?:recent\s+)?work|what\s+(?:is|are)\s+(?:he|she|they))",
         )
         stopwords = {
             "today", "tomorrow", "yesterday", "noon", "what", "slack", "can", "could",
@@ -1828,11 +1919,12 @@ class CognitivePlanner:
         target_uid = None
         target_uname = None
         for en in employee_names:
-            if en.startswith("U") and len(en) >= 8 and en[1:].isalnum():
-                target_uid = en
+            clean_en = en.lstrip("@").strip()
+            if (clean_en.startswith("U") or clean_en.startswith("W")) and len(clean_en) >= 5 and re.match(r"^[UW][A-Za-z0-9_.-]+$", clean_en):
+                target_uid = clean_en
                 break
-            elif not target_uname and en.lower() not in stopwords:
-                target_uname = en
+            elif not target_uname and clean_en.lower() not in stopwords:
+                target_uname = clean_en
 
         return ExtractedEntities(
             employee_names=employee_names,

@@ -406,30 +406,100 @@ class SlackIntentRouter:
         # EXPLICIT SLACK USER MENTION
         # ------------------------------------------------------
 
-        mention_match = re.search(
-            r"<@([A-Z0-9]+)(?:\|[^>]+)?>",
+        mention_matches = list(re.finditer(
+            r"<@([a-zA-Z0-9_.-]+)(?:\|([^>]+))?>",
             text,
-        )
+        ))
 
-        if mention_match:
-            mentioned_user_id = mention_match.group(1)
-            display_name = mentioned_user_id
+        # Filter out bot user mentions if configured
+        bot_user_id = None
+        try:
+            from infrastructure.config.settings import get_settings
+            settings = get_settings()
+            bot_user_id = settings.slack_bot_user_id
+        except Exception:
+            try:
+                from config import get_settings
+                settings = get_settings()
+                bot_user_id = settings.slack_bot_user_id
+            except Exception:
+                pass
 
+        def _is_bot(uid: str, label: str | None = None) -> bool:
+            if not uid:
+                return False
+            low = uid.lower()
+            if low in ("u_bot", "ubot", "polis", "here", "channel", "everyone"):
+                return True
+            if bot_user_id and uid == bot_user_id:
+                return True
+            if label and label.lower() in ("polis", "bot", "polis bot"):
+                return True
+            for u in users:
+                if u.get("id") == uid:
+                    uname = (u.get("name") or "").lower()
+                    udisp = (u.get("profile", {}).get("display_name") or "").lower()
+                    ureal = (u.get("real_name") or "").lower()
+                    if (
+                        u.get("is_bot")
+                        or uname == "polis"
+                        or udisp == "polis"
+                        or "polis bot" in ureal
+                    ):
+                        return True
+            return False
+
+        target_mention = None
+        for mm in mention_matches:
+            uid = mm.group(1)
+            lbl = mm.group(2)
+            if _is_bot(uid, lbl):
+                continue
+            target_mention = mm
+            break
+
+        if target_mention:
+            mentioned_user_id = target_mention.group(1)
+            pipe_label = target_mention.group(2)
+            display_name = pipe_label or mentioned_user_id
+
+            resolved_user = None
             for user in users:
                 if user.get("id") == mentioned_user_id:
-                    display_name = (
-                        user.get("profile", {})
-                        .get("display_name")
-                        or user.get("real_name")
-                        or user.get("name")
-                        or mentioned_user_id
-                    )
+                    resolved_user = user
                     break
+
+            if resolved_user is not None:
+                display_name = (
+                    resolved_user.get("profile", {})
+                    .get("display_name")
+                    or resolved_user.get("real_name")
+                    or resolved_user.get("name")
+                    or pipe_label
+                    or mentioned_user_id
+                )
+                return {
+                    "id": resolved_user.get("id") or mentioned_user_id,
+                    "name": display_name,
+                }
+
+            # If user ID wasn't in users directory, try identity service get_display_name
+            if self._identity_service is not None and hasattr(self._identity_service, "get_display_name"):
+                try:
+                    res_name = self._identity_service.get_display_name(mentioned_user_id)
+                    if res_name and res_name != mentioned_user_id:
+                        return {
+                            "id": mentioned_user_id,
+                            "name": res_name,
+                        }
+                except Exception:
+                    pass
 
             return {
                 "id": mentioned_user_id,
-                "name": display_name,
+                "name": mentioned_user_id,
             }
+
         matches: list[dict] = []
 
         for user in users:
@@ -449,23 +519,26 @@ class SlackIntentRouter:
             }
 
             for candidate in candidates:
-                    candidate = candidate.strip()
+                candidate = candidate.strip()
 
-                    if not candidate:
-                        continue
+                if not candidate:
+                    continue
 
-                    candidate_normalized = " ".join(
-                        candidate.lower().split()
-                    )
+                candidate_normalized = " ".join(
+                    candidate.lower().split()
+                )
 
-                    if re.search(
-                        rf"(?<!\w){re.escape(candidate_normalized)}(?!\w)",
-                        normalized_text,
-                    ):
-                        if user not in matches:
-                            matches.append(user)
+                if len(candidate_normalized) < 2 or candidate_normalized in ("i", "me", "my", "all", "polis"):
+                    continue
 
-                        break
+                if re.search(
+                    rf"(?<!\w)@?{re.escape(candidate_normalized)}(?!\w)",
+                    normalized_text,
+                ):
+                    if user not in matches:
+                        matches.append(user)
+
+                    break
 
         if len(matches) == 1:
             user = matches[0]

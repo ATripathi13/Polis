@@ -366,3 +366,31 @@ def test_planner_llm_cycle_detected_falls_back_safely():
     assert isinstance(plan, CognitivePlan)
     assert plan.intent == IntentCategory.DECISION_QUERY
     assert len(plan.execution_steps) == 1
+
+
+def test_extract_entities_slack_mention_pipe_label_not_in_employee_names():
+    """Structured Slack mentions <@USER_ID|label> extract user ID but do not add label to employee_names."""
+    extracted = CognitivePlanner.extract_entities("Schedule a meeting with <@U_ALICE|Alice Smith> tomorrow at 3pm")
+    assert "U_ALICE" in extracted.employee_names
+    assert "Alice Smith" not in extracted.employee_names
+    assert "Alice" not in extracted.employee_names
+    assert extracted.employee_names == ["U_ALICE"]
+    assert extracted.target_user_id == "U_ALICE"
+
+
+def test_unrelated_intents_do_not_receive_pipe_labels_as_employee_names():
+    """Unrelated intents (calendar, task, knowledge) do not receive pipe labels in employee_names."""
+    planner = CognitivePlanner()
+    # Calendar intent
+    plan_cal = planner.plan("Schedule a meeting called Architecture Review with <@U_BOB|Bob Jones> tomorrow at 2pm")
+    assert plan_cal.intent == IntentCategory.CALENDAR_ACTION
+    assert plan_cal.entities.employee_names == ["U_BOB"]
+    assert "Bob Jones" not in plan_cal.entities.employee_names
+    assert "Bob" not in plan_cal.entities.employee_names
+
+    # Task intent
+    plan_task = planner.plan("Create a task: 'Review pull request' assigned to <@U_CHARLIE|Charlie Brown>")
+    assert plan_task.intent == IntentCategory.TASK_ACTION
+    assert plan_task.entities.employee_names == ["U_CHARLIE"]
+    assert "Charlie Brown" not in plan_task.entities.employee_names
+    assert "Charlie" not in plan_task.entities.employee_names

@@ -3869,6 +3869,35 @@ class SimpleCognitiveEngine(
             or question.target_user_name
             or step_params.get("target_user_name")
         )
+
+        # Check question.text for raw Slack mention if target_user_id is not yet set
+        if not target_user_id and question.text:
+            mention_matches = list(re.finditer(r"<@([a-zA-Z0-9_.-]+)(?:\|([^>]+))?>", question.text))
+            for mm in mention_matches:
+                m_uid = mm.group(1)
+                m_label = mm.group(2)
+                is_bot = m_uid.lower() in ("u_bot", "ubot", "polis", "here", "channel", "everyone")
+                if m_label and m_label.lower() in ("polis", "bot", "polis bot"):
+                    is_bot = True
+                if not is_bot and self._identity_resolver and hasattr(self._identity_resolver, "get_workspace_users"):
+                    try:
+                        for u in self._identity_resolver.get_workspace_users():
+                            if u.get("id") == m_uid:
+                                uname = (u.get("name") or "").lower()
+                                udisp = (u.get("profile", {}).get("display_name") or "").lower()
+                                ureal = (u.get("real_name") or "").lower()
+                                if u.get("is_bot") or uname == "polis" or udisp == "polis" or "polis bot" in ureal:
+                                    is_bot = True
+                                break
+                    except Exception:
+                        pass
+                if is_bot:
+                    continue
+                target_user_id = m_uid
+                if not target_user_name:
+                    target_user_name = target_user_id
+                break
+
         req_user_id = (
             question.user_id
             or (context.user_id if context else None)
@@ -3893,18 +3922,25 @@ class SimpleCognitiveEngine(
 
         # If name is present but id is not, try identity resolver to disambiguate or resolve id
         if not target_user_id and target_user_name and self._identity_resolver is not None:
+            clean_target_name = target_user_name.lstrip("@").strip()
             try:
                 users = []
                 if hasattr(self._identity_resolver, "get_workspace_users"):
                     users = self._identity_resolver.get_workspace_users()
                 matches = []
+                # First check exact ID match
                 for u in users:
-                    disp = u.get("profile", {}).get("display_name") or ""
-                    real = u.get("real_name") or ""
-                    uname = u.get("name") or ""
-                    candidates = {disp.lower(), real.lower(), uname.lower()}
-                    if any(target_user_name.lower() == c or target_user_name.lower() in c.split() for c in candidates if c):
-                        matches.append(u)
+                    if u.get("id") == clean_target_name:
+                        matches = [u]
+                        break
+                if not matches:
+                    for u in users:
+                        disp = u.get("profile", {}).get("display_name") or ""
+                        real = u.get("real_name") or ""
+                        uname = u.get("name") or ""
+                        candidates = {disp.lower(), real.lower(), uname.lower()}
+                        if any(clean_target_name.lower() == c or clean_target_name.lower() in c.split() for c in candidates if c):
+                            matches.append(u)
 
                 if len(matches) > 1:
                     candidate_names = [
@@ -3926,6 +3962,26 @@ class SimpleCognitiveEngine(
                     )
             except Exception as e:
                 logger.warning("Identity resolution error in _handle_employee_work_query: %s", e)
+
+        # If target_user_id is resolved but display name is missing or raw ID, resolve display name
+        if target_user_id and (not target_user_name or target_user_name == target_user_id) and self._identity_resolver is not None:
+            try:
+                if hasattr(self._identity_resolver, "get_display_name"):
+                    res_name = self._identity_resolver.get_display_name(target_user_id)
+                    if res_name and res_name != target_user_id:
+                        target_user_name = res_name
+                if not target_user_name or target_user_name == target_user_id:
+                    if hasattr(self._identity_resolver, "get_workspace_users"):
+                        for u in self._identity_resolver.get_workspace_users():
+                            if u.get("id") == target_user_id:
+                                target_user_name = (
+                                    u.get("profile", {}).get("display_name")
+                                    or u.get("real_name")
+                                    or u.get("name")
+                                )
+                                break
+            except Exception as e:
+                logger.warning("Display name lookup failed for %s: %s", target_user_id, e)
 
         # Lookback period: default 7 days, 30 days if specified
         lookback_days = 7
