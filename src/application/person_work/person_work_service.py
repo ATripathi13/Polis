@@ -180,6 +180,8 @@ class PersonWorkService:
             is_self=is_self,
         )
 
+        is_avail_query = self._is_availability_query(query_text)
+
         # 2. Extract work items from communications
         raw_items: list[ExtractedWorkItem] = []
         for comm in communications:
@@ -214,6 +216,7 @@ class PersonWorkService:
                 target_ids=all_ids,
                 target_name=display_name,
                 canonical_person_id=clean_target_id,
+                is_availability_query=is_avail_query,
             )
             raw_items.extend(extracted)
 
@@ -248,7 +251,47 @@ class PersonWorkService:
         return summary
 
     @staticmethod
-    def _is_ignorable_message(text: str) -> bool:
+    def _is_availability_query(query_text: str | None) -> bool:
+        if not query_text:
+            return False
+        lowered = query_text.lower()
+        return bool(
+            re.search(
+                r"\b(?:available|availability|working\s+hours|schedule|sign(?:ed)?\s*off|sign[- ]off\s+time|absence|break|afk|ooo|out\s+of\s+office)\b",
+                lowered,
+            )
+        )
+
+    @staticmethod
+    def _is_personal_scheduling(text: str) -> bool:
+        lowered = text.lower().strip()
+        patterns = [
+            r"\b(?:sign(?:ing|ed)?\s+off(?:\s+(?:for\s+today|for\s+the\s+day|now))?)\b",
+            r"\b(?:call(?:ing)?\s+it\s+a\s+day)\b",
+            r"\b(?:tak(?:ing|e)\s+(?:a\s+)?(?:short\s+)?break)\b",
+            r"\b(?:stepp(?:ing|ed)?\s+away(?:\s+for\s+(?:a\s+bit|a\s+moment|a\s+few\s+minutes|lunch))?)\b",
+            r"\b(?:stepp(?:ing|ed)?\s+out)\b",
+            r"\b(?:go(?:ing)?\s+(?:for\s+|to\s+)?lunch|having\s+lunch|out\s+for\s+lunch|lunch\s+break)\b",
+            r"\b(?:afk|brb|back\s+in\s+a\s+bit|back\s+soon)\b",
+            r"\b(?:out\s+of\s+office|ooo)\b",
+            r"\b(?:good\s+night(?:\s+all|\s+team|\s+everyone)?)\b",
+            r"\b(?:wfh(?:\s+today)?|working\s+from\s+home(?:\s+today)?)\b",
+        ]
+        return any(re.search(pat, lowered) for pat in patterns)
+
+    @staticmethod
+    def _is_administrative_update_request(text: str) -> bool:
+        lowered = text.lower().strip()
+        clean = re.sub(r"[?!.,;:]+$", "", lowered).strip()
+        patterns = [
+            r"\b(?:provide|share|send|give|post|submit|write|prepare)\s+(?:a\s+|an\s+|the\s+|your\s+)?(?:work\s+)?(?:summary|update|status|status\s+report|report|notes|standup)\b",
+            r"\b(?:provide|share|send|give)\s+(?:your\s+)?(?:work\s+summary|update|status)\b",
+            r"^(?:your\s+)?(?:work\s+summary|status\s+update|update|status\s+report)$",
+        ]
+        return any(re.search(pat, clean) for pat in patterns)
+
+    @classmethod
+    def _is_ignorable_message(cls, text: str, is_availability_query: bool = False) -> bool:
         s = text.strip()
         if not s:
             return True
@@ -272,6 +315,10 @@ class PersonWorkService:
 
         # 3. Identity meta-questions (e.g. "Who is Akshat?")
         if re.match(r"^who\s+is\s+[a-zA-Z0-9_\-\s]+$", clean):
+            return True
+
+        # 4. Personal availability and scheduling messages (excluded for ordinary work summaries)
+        if not is_availability_query and cls._is_personal_scheduling(clean):
             return True
 
         return False
@@ -321,9 +368,10 @@ class PersonWorkService:
         target_ids: set[str],
         target_name: str,
         canonical_person_id: str,
+        is_availability_query: bool = False,
     ) -> list[ExtractedWorkItem]:
         body = (comm.content.body or "").strip()
-        if not body or self._is_ignorable_message(body):
+        if not body or self._is_ignorable_message(body, is_availability_query=is_availability_query):
             return []
 
         created_at = comm.created_at
@@ -344,11 +392,31 @@ class PersonWorkService:
         # Case A: Authored by target person
         # -------------------------------------------------------------
         if is_target_author:
+            # If availability query and message is personal scheduling, record availability item
+            if is_availability_query and self._is_personal_scheduling(body):
+                items.append(
+                    ExtractedWorkItem(
+                        work_item=f"Availability notice: {body}",
+                        activity_type=WorkActivityType.RECENT_DISCUSSION,
+                        status="availability_notice",
+                        latest_update=body,
+                        timestamp=created_at,
+                        source_channel=channel_name,
+                        source_ts=source_ts,
+                        person_id=canonical_person_id,
+                        person_name=actor_name,
+                        evidence=body,
+                    )
+                )
+                return items
+
             # Handle thread reply with parent message context (Scenario C)
             if has_parent_context:
                 parent_topic = self._clean_topic_phrase(parent_body)
                 sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", body) if s.strip()]
                 for s in sentences:
+                    if not is_availability_query and self._is_personal_scheduling(s):
+                        continue
                     classified = self._classify_statement(s)
                     if not classified:
                         continue
@@ -376,6 +444,8 @@ class PersonWorkService:
             # Standalone message or direct statements
             sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", body) if s.strip()]
             for s in sentences:
+                if not is_availability_query and self._is_personal_scheduling(s):
+                    continue
                 classified = self._classify_statement(s)
                 if not classified:
                     continue
@@ -417,38 +487,40 @@ class PersonWorkService:
                 re.IGNORECASE,
             )
 
-            if assign_match:
-                task_desc = self._clean_topic_phrase(assign_match.group(1))
-                items.append(
-                    ExtractedWorkItem(
-                        work_item=task_desc,
-                        activity_type=WorkActivityType.ASSIGNED_WORK,
-                        status="assigned",
-                        latest_update=body,
-                        timestamp=created_at,
-                        source_channel=channel_name,
-                        source_ts=source_ts,
-                        person_id=canonical_person_id,
-                        person_name=target_name,
-                        evidence=f"Assigned by {actor_name}: \"{body}\"",
+            if assign_match or assign_to_match:
+                raw_task = assign_match.group(1) if assign_match else (assign_to_match.group(1) or body)
+                task_desc = self._clean_topic_phrase(raw_task)
+                if self._is_administrative_update_request(task_desc):
+                    # Administrative request for an update or summary is a discussion, not a technical deliverable
+                    items.append(
+                        ExtractedWorkItem(
+                            work_item=f"Request to provide work summary/update",
+                            activity_type=WorkActivityType.RECENT_DISCUSSION,
+                            status="discussed",
+                            latest_update=body,
+                            timestamp=created_at,
+                            source_channel=channel_name,
+                            source_ts=source_ts,
+                            person_id=canonical_person_id,
+                            person_name=target_name,
+                            evidence=f"Update requested by {actor_name}: \"{body}\"",
+                        )
                     )
-                )
-            elif assign_to_match:
-                task_desc = self._clean_topic_phrase(assign_to_match.group(1) or body)
-                items.append(
-                    ExtractedWorkItem(
-                        work_item=task_desc,
-                        activity_type=WorkActivityType.ASSIGNED_WORK,
-                        status="assigned",
-                        latest_update=body,
-                        timestamp=created_at,
-                        source_channel=channel_name,
-                        source_ts=source_ts,
-                        person_id=canonical_person_id,
-                        person_name=target_name,
-                        evidence=f"Assigned by {actor_name}: \"{body}\"",
+                else:
+                    items.append(
+                        ExtractedWorkItem(
+                            work_item=task_desc,
+                            activity_type=WorkActivityType.ASSIGNED_WORK,
+                            status="assigned",
+                            latest_update=body,
+                            timestamp=created_at,
+                            source_channel=channel_name,
+                            source_ts=source_ts,
+                            person_id=canonical_person_id,
+                            person_name=target_name,
+                            evidence=f"Assigned by {actor_name}: \"{body}\"",
+                        )
                     )
-                )
             else:
                 # Merely mentioned or discussed
                 # Only include if substantive project discussion, NOT a question or greeting to the employee
@@ -563,7 +635,7 @@ class PersonWorkService:
 
         # 5. Active work (Scenario A, B, C, E)
         if re.search(
-            r"\b(?:i\s+am\s+implementing|currently\s+implementing|implementing|i\s+am\s+working\s+on|working\s+on|i\s+am\s+refining|refining|building|developing|handling|still\s+need\s+to|need\s+to|have\s+started|started|validating|testing|i\s+am\s+preparing|preparing)\b",
+            r"\b(?:i\s+am\s+implementing|i'm\s+implementing|currently\s+implementing|implementing|i\s+am\s+working\s+on|i'm\s+working\s+on|working\s+on|i\s+am\s+refining|i'm\s+refining|refining|i\s+am\s+improving|i'm\s+improving|improving|building|developing|handling|still\s+need\s+to|need\s+to|have\s+started|started|validating|testing|i\s+am\s+preparing|i'm\s+preparing|preparing)\b",
             lowered,
         ):
             return WorkActivityType.ACTIVE_WORK, self._clean_topic_phrase(s)
@@ -613,27 +685,65 @@ class PersonWorkService:
 
         consolidated_map: dict[str, ExtractedWorkItem] = {}
 
-        # Project workstreams to group related updates together
-        workstreams = [
-            ("POLIS production deployment", ["polis", "deployment", "deployed", "docker", "production", "slack integration"]),
+        # Project workstreams with whole-word or boundary matching
+        workstreams: list[tuple[str, list[str]]] = [
+            ("POLIS production deployment", [
+    "polis deployment",
+    "polis production deployment",
+    "polis api deployment",
+    "polis production",
+    "slack integration",
+]),
+            ("PolisBot capabilities and response quality", [
+                "polisbot", "system instructions", "response behavior", "response quality",
+                "response formatting", "chatbot", "prompt engineering", "bot capabilities",
+                "knowledge base", "polis bot"
+            ]),
             ("Canva graphics generation", ["canva", "graphics", "prompts"]),
-            ("IVAN QA workflow", ["ivan", "qa", "testing personas"]),
+            ("IVAN QA workflow", ["ivan", "testing personas"]),
             ("Calendar Agent", ["calendar agent", "calendar"]),
             ("Organizational Event Engine", ["event engine", "organizational event"]),
             ("API integration", ["api integration", "api credentials"]),
             ("PDF preview improvements", ["pdf preview", "pdf"]),
             ("email OTP verification flow", ["email otp", "email verification", "otp verification", "booking workflow", "otp timeout", "verification flow", "otp"]),
-            ("knowledge base and shortlinks", ["knowledge base", "shortlink", "shortlinks", "shortlink accuracy"]),
-            ("PolisBot governance", ["governance", "accountability", "polisbot"]),
+            ("knowledge base and shortlink accuracy", ["shortlink", "shortlinks", "shortlink accuracy"]),
+            ("CMO Blindspots podcast", ["cmo blindspots", "blindspots", "podcast", "podcast files"]),
+            ("Kriss Miller reels", ["kriss miller", "reels"]),
+            ("PolisBot governance", ["governance", "accountability"]),
         ]
+
+        generic_technical_words = {
+            "api", "testing", "test", "tests", "integration", "fix", "fixes", "fixed",
+            "improving", "improve", "improvements", "refining", "refinement", "updating",
+            "service", "module", "system", "feature", "code", "workflow", "work", "files",
+            "file", "support", "setup", "review", "validation", "validating", "bug", "issue"
+        }
+
+        generic_progress_pattern = re.compile(
+            r"\b(?:testing\s+(?:recent\s+)?changes|testing\s+recent|validating\s+changes|running\s+tests|testing\s+now|fixing\s+(?:response\s+)?formatting)\b",
+            re.IGNORECASE,
+        )
 
         for item in sorted_items:
             item_text = (item.work_item + " " + item.latest_update).lower()
             ws_key = None
-            for name, keywords in workstreams:
-                if any(kw in item_text for kw in keywords):
-                    ws_key = name
-                    break
+
+            # Special case: shortlink accuracy takes precedence over general knowledge base
+            if "shortlink" in item_text:
+                ws_key = "knowledge base and shortlink accuracy"
+            else:
+                for name, keywords in workstreams:
+                    for kw in keywords:
+                        # Use word boundaries so "polis" doesn't match "polisbot"
+                        if kw == "polis":
+                            if re.search(r"\bpolis\b(?!bot)", item_text):
+                                ws_key = name
+                                break
+                        elif re.search(rf"\b{re.escape(kw)}\b", item_text):
+                            ws_key = name
+                            break
+                    if ws_key:
+                        break
 
             norm_key = ws_key or self._normalize_item_key(item.work_item)
             if not norm_key:
@@ -645,52 +755,85 @@ class PersonWorkService:
             else:
                 norm_tokens = set(norm_key.split())
                 for k, existing_item in consolidated_map.items():
+                    # Same person check to prevent cross-person contamination
+                    if item.person_id and existing_item.person_id and item.person_id != existing_item.person_id:
+                        continue
                     # Thread or parent project match connects related updates
                     if item.project and existing_item.project and item.project.lower() == existing_item.project.lower():
                         matching_key = k
                         break
+                    # Allow closely related, otherwise unlabelled deployment updates
+                    # to inherit an established POLIS deployment context.
+                    if (
+                        not ws_key
+                        and k == "POLIS production deployment"
+                        and item.person_id == existing_item.person_id
+                        and item.source_channel == existing_item.source_channel
+                        and item.timestamp
+                        and existing_item.timestamp
+                        and abs((item.timestamp - existing_item.timestamp).total_seconds()) <= 4 * 60 * 60
+                        and re.search(r"\b(?:docker|configuration|api|deployed|deployment|slack\s+integration)\b", item_text)
+                    ):
+                        matching_key = k
+                        break
+
                     k_tokens = set(k.split())
                     union = norm_tokens | k_tokens
                     if not union:
                         continue
                     jaccard = len(norm_tokens & k_tokens) / len(union)
                     common = norm_tokens & k_tokens
-                    if jaccard >= 0.35 or len(common) >= 2:
+                    # Exclude purely generic words (e.g. both containing 'testing' and 'api') from triggering a false merge
+                    specific_common = common - generic_technical_words
+                    if len(specific_common) >= 2 or (jaccard >= 0.35 and len(specific_common) >= 1):
                         matching_key = k
                         break
 
             if matching_key:
                 existing = consolidated_map[matching_key]
-                # Preserve and append updates
+                # Preserve and append updates history
                 all_updates = existing.updates + [item.latest_update]
                 item.updates = all_updates
 
-                # Preserve the established project / topic title if the newer update is a progress update
                 canonical_markers = (
                     "canva", "polis", "event engine", "calendar", "ivan", "api",
-                    "email", "otp", "verification", "knowledge", "governance"
+                    "email", "otp", "verification", "knowledge", "governance", "podcast", "blindspots"
                 )
                 if ws_key:
                     if any(k in existing.work_item.lower() for k in canonical_markers):
                         item.work_item = existing.work_item
                     else:
                         item.work_item = ws_key
+                elif matching_key == "POLIS production deployment":
+                    item.work_item = existing.work_item
                 elif any(k in existing.work_item.lower() for k in canonical_markers):
                     if not any(k in item.work_item.lower() for k in canonical_markers):
                         item.work_item = existing.work_item
 
-                # If newer update is COMPLETED, update state to completed
-                if item.activity_type == WorkActivityType.COMPLETED_WORK:
+                # State transition and precedence rules:
+                # 1. A RECENT_DISCUSSION must never overwrite established active/completed/commitment work
+                if item.activity_type == WorkActivityType.RECENT_DISCUSSION and existing.activity_type != WorkActivityType.RECENT_DISCUSSION:
+                    existing.updates = all_updates
+                    consolidated_map[matching_key] = existing
+                # 2. If newer update is COMPLETED, update state to completed
+                elif item.activity_type == WorkActivityType.COMPLETED_WORK:
                     consolidated_map[matching_key] = item
-                # If newer update is ACTIVE, keep newer active update
+                # 3. If newer update is ACTIVE, keep newer active update (continuing activity)
                 elif item.activity_type == WorkActivityType.ACTIVE_WORK:
                     consolidated_map[matching_key] = item
-                # If newer update is BLOCKER, prioritize blocker
+                # 4. If newer update is BLOCKER, prioritize blocker
                 elif item.activity_type == WorkActivityType.BLOCKER:
                     consolidated_map[matching_key] = item
+                # 5. If newer is commitment and existing was active, keep active and append update
+                elif item.activity_type == WorkActivityType.COMMITMENT and existing.activity_type == WorkActivityType.ACTIVE_WORK:
+                    existing.updates = all_updates
+                    consolidated_map[matching_key] = existing
                 else:
                     if (item.timestamp or datetime.min.replace(tzinfo=timezone.utc)) >= (existing.timestamp or datetime.min.replace(tzinfo=timezone.utc)):
                         consolidated_map[matching_key] = item
+                    else:
+                        existing.updates = all_updates
+                        consolidated_map[matching_key] = existing
             else:
                 item.updates = [item.latest_update]
                 consolidated_map[norm_key] = item
@@ -718,6 +861,8 @@ class PersonWorkService:
         if not query_text:
             return "current_work"
         lowered = query_text.lower()
+        if re.search(r"\b(?:available|availability|working\s+hours|schedule|sign(?:ed)?\s*off|sign[- ]off\s+time|absence|break|afk|ooo|out\s+of\s+office)\b", lowered):
+            return "availability"
         if re.search(r"\b(?:what\s+has\s+changed|what\s+changed|changes?|diff)\b", lowered):
             return "changes"
         if re.search(r"\b(?:pending|remaining|still\s+(?:open|in\s+progress|ongoing)|outstanding)\b", lowered):
@@ -789,19 +934,22 @@ class PersonWorkService:
     ) -> str:
         evidence_lines: list[str] = []
         if summary.active_work:
-            evidence_lines.append("Active Work & Workstreams:")
+            evidence_lines.append("Active Work & Workstreams (Confirmed Ongoing):")
             for item in summary.active_work:
-                evidence_lines.append(f"- Project: {item.work_item} | Latest update: {item.latest_update}")
+                updates_str = f" [Recent progress updates: {'; '.join(item.updates)}]" if len(item.updates) > 1 else ""
+                evidence_lines.append(f"- Workstream: {item.work_item} | Latest update: {item.latest_update}{updates_str}")
         if summary.assigned_work:
-            evidence_lines.append("Assigned Tasks:")
+            evidence_lines.append("Assigned Work (Delegated tasks, not yet confirmed started):")
             for item in summary.assigned_work:
-                evidence_lines.append(f"- Task: {item.work_item} | Details: {item.latest_update}")
+                deadline_str = f" | Deadline: {item.deadline}" if item.deadline else ""
+                evidence_lines.append(f"- Task: {item.work_item} | Details: {item.latest_update}{deadline_str}")
         if summary.commitments:
-            evidence_lines.append("Upcoming Commitments / Planned Work:")
+            evidence_lines.append("Upcoming Commitments / Planned Next Steps (Pending/conditional, not completed):")
             for item in summary.commitments:
-                evidence_lines.append(f"- Commitment: {item.work_item} | Details: {item.latest_update}")
+                deadline_str = f" | Target: {item.deadline}" if item.deadline else ""
+                evidence_lines.append(f"- Commitment: {item.work_item} | Details: {item.latest_update}{deadline_str}")
         if summary.completed_work:
-            evidence_lines.append("Recently Completed Work:")
+            evidence_lines.append("Recently Completed Work (Verified finished):")
             for item in summary.completed_work:
                 evidence_lines.append(f"- Completed: {item.work_item} | Details: {item.latest_update}")
         if summary.blockers:
@@ -809,15 +957,15 @@ class PersonWorkService:
             for item in summary.blockers:
                 evidence_lines.append(f"- Blocker: {item.work_item} | Details: {item.latest_update}")
         if summary.discussions:
-            evidence_lines.append("Recent Discussions (without confirmed ownership):")
+            evidence_lines.append("Discussions & Mentions (Not established as confirmed ownership or active deliverables):")
             for item in summary.discussions[:3]:
-                evidence_lines.append(f"- Discussion: {item.work_item}")
+                evidence_lines.append(f"- Discussion/Mention: {item.work_item} | Evidence: {item.evidence}")
 
         structured_evidence = "\n".join(evidence_lines)
         target_desc = f"{summary.person_name} (the user themselves)" if is_self else summary.person_name
 
-        prompt = f"""You are POLIS, a knowledgeable, helpful human colleague and organizational intelligence assistant.
-Communicate naturally like a human colleague—NOT like a database search engine, mechanical reporter, or raw transcript dump.
+        prompt = f"""You are POLIS, an intelligent organizational assistant communicating like a knowledgeable, human colleague.
+Synthesize the available evidence and explain it naturally and clearly—as if a teammate who understands the work is explaining it to a colleague.
 
 User question: {query_text}
 Target person: {target_desc}
@@ -828,25 +976,24 @@ Structured Work Evidence:
 {structured_evidence}
 
 Core Instructions:
-1. Speak naturally and conversationally, directly addressing what the user asked.
-2. Form a complete, coherent understanding of workstreams (e.g. connected problem, assignment, and completion confirmations).
-3. Distinguish clearly between:
-   - Confirmed completed work
-   - Ongoing active work
-   - Assigned tasks and commitments
-   - Blockers and dependencies
-4. Never confuse a question about someone's work with evidence that they performed that work.
-5. If information is incomplete or unverified, acknowledge it conversationally (e.g., "I can see that [Person] has been involved in [Work], but I couldn't find a clear update confirming whether the remaining tasks have been completed.").
-6. If the user asks specifically about completed work, focus on verified completions. If they ask about current work, highlight ongoing focus and note completed work in proper context.
-7. Avoid unnecessary channel names, raw IDs, status codes, or explanations of how information was retrieved.
-8. If the user asks about themselves ("What am I working on?", "my priorities"), address them directly in the second person ("You have been focusing on..."). If asking about a colleague, use their name ("Hemant has been focusing on...").
-9. Where structured formatting helps readability, organize with clean headers and bullet points:
-   - Short natural opening statement.
-   - **Current Work**
-   - **Assigned Work and Commitments**
-   - **Recently Completed**
-   - **Blockers and Dependencies**
-   - **Overall Priorities**
+1. Synthesize before communicating:
+   - Connect related activities into a coherent explanation of the broader workstream rather than listing disconnected observations.
+   - For example, if an employee has updates about updating the knowledge base, refining system instructions, testing quality, and fixing formatting for a bot, explain them together as one unified effort.
+2. Respect ownership and activity boundaries:
+   - Only describe work directly reported by the person as their active work.
+   - An explicit assignment means a task was delegated to them, but work has not necessarily started.
+   - A commitment means they plan to do something (or conditional on another task), NOT that it is already completed or currently underway.
+   - Never describe a commitment as completed without confirmation.
+   - Mentions and discussions do NOT establish ownership or confirmed deliverables. Never invent responsibilities or projects from passing mentions.
+3. Handle missing or unverified evidence naturally:
+   - When evidence is limited or consists only of mentions/discussions, state that conversationally and briefly (e.g., "Recent conversations mention Vijay in relation to Circle and GJ, but they don't establish a specific ongoing deliverable. I don't want to attribute work to him without clearer evidence.").
+   - Do NOT use mechanical boilerplate disclaimers (e.g. "Nothing definitively marked as completed", "No specific information available", "It looks like...", "I don't currently have enough verified information").
+4. Structure and tone:
+   - Use natural paragraphs and straightforward language.
+   - Do NOT force a rigid 5-section template (avoid forcing empty headings or duplicate priority summaries).
+   - If structured headings are genuinely helpful for multiple distinct items, use them naturally, but avoid unnecessary bullet dumps.
+   - If the user asks about themselves ("What am I working on?", "my priorities"), address them directly in the second person ("You have been focusing on..."). If asking about a colleague, use their name ("Hemant has been focusing on...").
+   - Exclude personal scheduling messages (breaks, sign-offs, lunch) unless the user explicitly asked about availability or schedule.
 
 Return ONLY the natural response.
 """
@@ -859,6 +1006,18 @@ Return ONLY the natural response.
         is_self: bool,
     ) -> str:
         sections: list[str] = []
+
+        if query_focus == "availability":
+            target_str = "You" if is_self else summary.person_name
+            sched_items = [
+                d for d in summary.items
+                if self._is_personal_scheduling(d.latest_update or d.work_item)
+            ]
+            if sched_items:
+                latest = sched_items[0]
+                return f"{target_str} was recently recorded with availability update: \"{latest.latest_update}\"."
+            else:
+                return f"There are no recent sign-off, absence, or break notices recorded for {target_str}."
 
         if query_focus == "blockers":
             if summary.blockers:
@@ -912,7 +1071,8 @@ Return ONLY the natural response.
                     lines = ["**Assigned Work and Commitments**"]
                     for item in combined_commitments:
                         deadline_str = f" (Deadline: {item.deadline})" if item.deadline else ""
-                        lines.append(f"• **{item.work_item}** — {item.latest_update}{deadline_str}")
+                        status_label = " (Planned commitment)" if item.activity_type == WorkActivityType.COMMITMENT else ""
+                        lines.append(f"• **{item.work_item}** — {item.latest_update}{status_label}{deadline_str}")
                     sections.append("\n".join(lines))
                 if summary.blockers:
                     lines = ["**Blockers and Dependencies**"]
@@ -932,7 +1092,8 @@ Return ONLY the natural response.
                 lines = ["**Assigned Work and Commitments**"]
                 for item in combined_assigned:
                     deadline_str = f" (Deadline: {item.deadline})" if item.deadline else ""
-                    lines.append(f"• **{item.work_item}** — {item.latest_update}{deadline_str}")
+                    status_label = " (Planned commitment)" if item.activity_type == WorkActivityType.COMMITMENT else ""
+                    lines.append(f"• **{item.work_item}** — {item.latest_update}{status_label}{deadline_str}")
                 sections.append("\n".join(lines))
             else:
                 target_str = "you" if is_self else summary.person_name
@@ -940,6 +1101,18 @@ Return ONLY the natural response.
             return "\n\n".join(sections)
 
         # General summary / current work / progress / changes
+        # Case C Scenario: Discussions only without confirmed work ownership
+        if not summary.active_work and not summary.assigned_work and not summary.commitments and not summary.completed_work:
+            if summary.discussions:
+                topic_names = [f"'{d.work_item}'" for d in summary.discussions[:2]]
+                topic_str = f"in relation to {', '.join(topic_names)}" if topic_names else "in recent discussions"
+                target_str = "you" if is_self else summary.person_name
+                return (
+                    f"Recent conversations mention {target_str} ({topic_str}), "
+                    f"but they do not establish a specific ongoing deliverable or confirmed technical work. "
+                    f"I don't want to attribute responsibilities to {target_str} without clearer evidence."
+                )
+
         if is_self:
             intro = "Here is a summary of your current work and priorities:"
         else:
@@ -958,7 +1131,8 @@ Return ONLY the natural response.
             lines = ["**Assigned Work and Commitments**"]
             for item in combined_commitments:
                 deadline_str = f" (Deadline: {item.deadline})" if item.deadline else ""
-                lines.append(f"• **{item.work_item}** — {item.latest_update}{deadline_str}")
+                status_label = " (Planned commitment)" if item.activity_type == WorkActivityType.COMMITMENT else ""
+                lines.append(f"• **{item.work_item}** — {item.latest_update}{status_label}{deadline_str}")
             sections.append("\n".join(lines))
 
         if summary.completed_work:
@@ -973,29 +1147,9 @@ Return ONLY the natural response.
                 lines.append(f"• **{item.work_item}** — {item.latest_update}")
             sections.append("\n".join(lines))
 
-        if summary.discussions and not summary.active_work:
-            lines = ["**Recent Discussions**"]
-            for item in summary.discussions[:3]:
-                lines.append(f"• **{item.work_item}**")
-            sections.append("\n".join(lines))
-
-        priorities: list[str] = []
-        if summary.active_work:
-            priorities.extend([f"Continuing {item.work_item}" for item in summary.active_work[:2]])
-        if summary.blockers:
-            priorities.extend([f"Resolving blocker on {item.work_item}" for item in summary.blockers[:1]])
-        if summary.commitments:
-            priorities.extend([f"Upcoming commitment: {item.work_item}" for item in summary.commitments[:2]])
-
-        if priorities:
-            lines = ["**Overall Priorities**"]
-            for p in priorities:
-                lines.append(f"• {p}")
-            sections.append("\n".join(lines))
-
         if summary.completed_work and summary.active_work:
             ref_name = "His" if not is_self else "Your"
-            sections.append(f"The {summary.completed_work[0].work_item} fixes have also been completed, according to the latest recorded updates. {ref_name} other work appears to be ongoing.")
+            sections.append(f"{ref_name} other work, including {summary.active_work[0].work_item}, appears to be ongoing.")
 
         return "\n\n".join(sections)
 

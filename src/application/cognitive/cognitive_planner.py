@@ -622,6 +622,8 @@ class CognitivePlanner:
             r"\bwhat\s+(?:should|do)\s+i\s+work\s+on(?:\s+today)?\b",
             r"\bmy\s+recent\s+work\b",
             r"\bmy\s+current\s+work\b",
+            r"\b(?:am\s+i|have\s+i)\s+(?:available|signed\s+off|on\s+break)\b",
+            r"\bwhat\s+is\s+my\s+(?:schedule|availability|status)\b",
         )
 
         other_work_patterns = (
@@ -633,10 +635,16 @@ class CognitivePlanner:
             r"\bsummarize\s+(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)(?:'s)?\s+(?:recent\s+)?work(?:\s+from\s+slack)?\b",
             r"\bwhat\s+is\s+this\s+person\s+(?:currently\s+)?(?:working|blocked)\s+on\b",
             r"\bwhat\s+is\s+this\s+person\s+working\s+on\b",
+            # Availability, schedule, and sign-off queries
+            r"\b(?:is|has)\s+(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)\s+(?:available|online|signed\s+off|on\s+break|taking\s+a\s+break)\b",
+            r"\bwhen\s+did\s+(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)\s+(?:sign\s+off|leave|step\s+away)\b",
+            r"\bwhat\s+is\s+(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)'s\s+(?:schedule|availability|working\s+hours|status)\b",
             # Follow-up pronoun and anaphoric continuity patterns
             r"\bwhat\s+(?:has\s+he|has\s+she|have\s+they|did\s+he|did\s+she)\s+(?:completed|done|finished|worked\s+on|handled)(?:\s+recently|\s+this\s+week)?\b",
             r"\bwhat\s+(?:is|are)\s+(?:he|she|they)\s+(?:currently\s+)?working\s+on\b",
             r"\bwhat\s+(?:is|are)\s+(?:he|she|they)\s+blocked\s+on\b",
+            r"\b(?:is|has)\s+(?:he|she|they)\s+(?:available|online|signed\s+off|on\s+break)\b",
+            r"\bwhen\s+did\s+(?:he|she|they)\s+(?:sign\s+off|leave|step\s+away)\b",
             r"\bwhat\s+(?:tasks\s+)?(?:have\s+been\s+assigned\s+to|are\s+assigned\s+to)\s+(?:him|her|them)\b",
             r"\bwhat\s+progress\s+has\s+(?:he|she|they)\s+made\b",
             r"\bwhat\s+is\s+still\s+(?:pending|remaining|ongoing|in\s+progress|open)\b",
