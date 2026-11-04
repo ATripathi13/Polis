@@ -3941,6 +3941,7 @@ class SimpleCognitiveEngine(
             if engine_llm is not None:
                 self._person_work_service.llm_client = engine_llm
 
+        ch_type = getattr(context, "channel_type", None) if context else None
         summary = self._person_work_service.get_person_work_summary(
             target_user_id=target_user_id,
             target_user_name=target_user_name,
@@ -3948,6 +3949,7 @@ class SimpleCognitiveEngine(
             query_text=question.text,
             lookback_days=lookback_days,
             is_self=is_self,
+            requester_channel_type=ch_type,
         )
 
         clear_pending = bool(context and context.pending_operation)

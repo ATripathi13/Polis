@@ -633,6 +633,16 @@ class CognitivePlanner:
             r"\bsummarize\s+(?:<@[a-z0-9_|-]+>|[a-z0-9_.-]+)(?:'s)?\s+(?:recent\s+)?work(?:\s+from\s+slack)?\b",
             r"\bwhat\s+is\s+this\s+person\s+(?:currently\s+)?(?:working|blocked)\s+on\b",
             r"\bwhat\s+is\s+this\s+person\s+working\s+on\b",
+            # Follow-up pronoun and anaphoric continuity patterns
+            r"\bwhat\s+(?:has\s+he|has\s+she|have\s+they|did\s+he|did\s+she)\s+(?:completed|done|finished|worked\s+on|handled)(?:\s+recently|\s+this\s+week)?\b",
+            r"\bwhat\s+(?:is|are)\s+(?:he|she|they)\s+(?:currently\s+)?working\s+on\b",
+            r"\bwhat\s+(?:is|are)\s+(?:he|she|they)\s+blocked\s+on\b",
+            r"\bwhat\s+(?:tasks\s+)?(?:have\s+been\s+assigned\s+to|are\s+assigned\s+to)\s+(?:him|her|them)\b",
+            r"\bwhat\s+progress\s+has\s+(?:he|she|they)\s+made\b",
+            r"\bwhat\s+is\s+still\s+(?:pending|remaining|ongoing|in\s+progress|open)\b",
+            r"\bwhat\s+(?:tasks?|work)\s+(?:is|are)\s+still\s+(?:pending|remaining|ongoing)\b",
+            r"\bwhat\s+has\s+changed(?:\s+since\s+(?:the\s+)?(?:last|previous)\s+update)?\b",
+            r"\bwhat\s+are\s+(?:his|her|their)\s+(?:priorities|tasks|responsibilities)\b",
         )
 
         is_self = any(re.search(pat, norm) for pat in self_work_patterns)
@@ -651,11 +661,42 @@ class CognitivePlanner:
             named_person = None
             if extracted.employee_names:
                 named_person = extracted.employee_names[0]
-            elif "this person" in norm:
-                if ctx and ctx.history:
+            elif any(p in norm for p in ("he", "him", "his", "she", "her", "they", "them", "their", "this person", "that person", "still pending", "remaining", "what has changed", "what progress")):
+                if ctx and getattr(ctx, "history", None):
                     for msg in reversed(ctx.history):
-                        if msg.get("user") or msg.get("author"):
-                            named_person = msg.get("author") or msg.get("user")
+                        meta = msg.get("metadata") if isinstance(msg.get("metadata"), dict) else {}
+                        meta_name = meta.get("target_user_name") or msg.get("target_user_name")
+                        meta_id = meta.get("target_user_id") or msg.get("target_user_id")
+                        if meta_name:
+                            named_person = meta_name
+                            if meta_id:
+                                effective_target_id = meta_id
+                            break
+                        if meta_id:
+                            effective_target_id = meta_id
+                            break
+                        content = (msg.get("content") or "").strip()
+                        m = re.search(r"\bwhat\s+(?:is|has)\s+([a-zA-Z0-9_.-]+)(?:\s+currently|\s+recently)?\s+(?:working|completed|done|handled|blocked)", content, re.IGNORECASE)
+                        if m and m.group(1).lower() not in ("this", "that", "the", "he", "she", "they", "i", "we", "my", "your"):
+                            named_person = m.group(1).strip()
+                            break
+                        m2 = re.search(r"\b(?:for|concerning|regarding|about)\s+([A-Z][a-zA-Z0-9_.-]+)\b", content)
+                        if m2 and m2.group(1).lower() not in ("you", "me", "this", "that", "the"):
+                            named_person = m2.group(1).strip()
+                            break
+                        if self._identity_service and hasattr(self._identity_service, "get_workspace_users"):
+                            try:
+                                for u in self._identity_service.get_workspace_users():
+                                    for un in [u.get("profile", {}).get("display_name"), u.get("real_name"), u.get("name")]:
+                                        if un and len(un) >= 2 and re.search(rf"\b{re.escape(un.lower())}\b", content.lower()):
+                                            named_person = u.get("profile", {}).get("display_name") or u.get("real_name") or u.get("name")
+                                            effective_target_id = u["id"]
+                                            break
+                                    if named_person:
+                                        break
+                            except Exception:
+                                pass
+                        if named_person:
                             break
                 named_person = named_person or "this person"
 

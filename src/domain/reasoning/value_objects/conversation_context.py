@@ -240,6 +240,8 @@ class ConversationContext:
         user_id: str | None = None,
         pending_operation: dict[str, Any] | Any | None = None,
         clear_pending: bool = False,
+        user_metadata: dict[str, Any] | None = None,
+        assistant_metadata: dict[str, Any] | None = None,
     ) -> "ConversationContext":
         effective_user_id = user_id or self.user_id
 
@@ -270,22 +272,22 @@ class ConversationContext:
             if last_pending == next_pending and self.pending_operation == next_pending:
                 return self
 
-        # Always include resulting pending state in assistant metadata
-        assistant_metadata = {
-            "pending_operation": next_pending,
-        }
+        user_meta = dict(user_metadata) if user_metadata else {}
+        asst_meta = dict(assistant_metadata) if assistant_metadata else {}
+        asst_meta["pending_operation"] = next_pending
 
         context = self.add_message(
             role="user",
             content=user_message,
             user_id=effective_user_id,
+            metadata=user_meta,
         )
 
         updated_context = context.add_message(
             role="assistant",
             content=assistant_message,
             user_id=effective_user_id,
-            metadata=assistant_metadata,
+            metadata=asst_meta,
         )
 
         return ConversationContext(

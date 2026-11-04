@@ -117,6 +117,7 @@ class PersonWorkService:
         lookback_days: int = 7,
         query_text: str | None = None,
         is_self: bool = False,
+        requester_channel_type: str | None = None,
     ) -> PersonWorkSummary:
         """
         Aggregate and synthesize person-specific work from recent communications.
@@ -186,8 +187,26 @@ class PersonWorkService:
             ch_type = getattr(comm.channel, "channel_type", "")
             ch_id = getattr(getattr(comm.channel, "identity", None), "internal_id", "")
             if ch_type in ("im", "mpim", "private"):
+                # Requirement: Do not use inaccessible private messages to answer a public-channel question
+                if requester_channel_type == "public":
+                    continue
+                # In DMs / private channels, verify requester authorization
                 actor_internal = getattr(getattr(comm.actor, "identity", None), "internal_id", "")
-                if requester_user_id and actor_internal != requester_user_id and requester_user_id not in ch_id:
+                authorized_users: set[str] = set()
+                if actor_internal:
+                    authorized_users.add(actor_internal)
+                if isinstance(ch_id, str):
+                    for part in ch_id.replace("_", "-").split("-"):
+                        if part:
+                            authorized_users.add(part)
+                if hasattr(comm.channel, "metadata") and isinstance(comm.channel.metadata, dict):
+                    authorized_users.update(comm.channel.metadata.get("members", []))
+                if hasattr(comm.content, "metadata") and isinstance(comm.content.metadata, dict):
+                    authorized_users.update(comm.content.metadata.get("authorized_users", []))
+                if hasattr(comm, "mentions") and isinstance(comm.mentions, list):
+                    authorized_users.update(comm.mentions)
+
+                if requester_user_id and requester_user_id not in authorized_users and requester_user_id not in ch_id:
                     continue
 
             extracted = self._extract_from_communication(
@@ -528,7 +547,7 @@ class PersonWorkService:
 
         # 3. Completed work (Scenario A, E)
         if re.search(
-            r"\b(?:have\s+completed|is\s+complete|are\s+complete|completed|have\s+finished|finished|passed\s+all\s+tests|is\s+done|are\s+done|has\s+passed|is\s+now\s+deployed|deployed)\b",
+            r"\b(?:have\s+completed|is\s+complete|are\s+complete|completed|have\s+finished|finished|passed\s+all\s+tests|is\s+done|are\s+done|has\s+passed|is\s+now\s+deployed|deployed|have\s+fixed|fixed|resolved|has\s+been\s+fixed|have\s+resolved)\b",
             lowered,
         ):
             return WorkActivityType.COMPLETED_WORK, self._clean_topic_phrase(s)
@@ -601,6 +620,9 @@ class PersonWorkService:
             ("Organizational Event Engine", ["event engine", "organizational event"]),
             ("API integration", ["api integration", "api credentials"]),
             ("PDF preview improvements", ["pdf preview", "pdf"]),
+            ("email OTP verification flow", ["email otp", "email verification", "otp verification", "booking workflow", "otp timeout", "verification flow", "otp"]),
+            ("knowledge base and shortlinks", ["knowledge base", "shortlink", "shortlinks", "shortlink accuracy"]),
+            ("PolisBot governance", ["governance", "accountability", "polisbot"]),
         ]
 
         for item in sorted_items:
@@ -620,13 +642,18 @@ class PersonWorkService:
                 matching_key = norm_key
             else:
                 norm_tokens = set(norm_key.split())
-                for k in consolidated_map:
+                for k, existing_item in consolidated_map.items():
+                    # Thread or parent project match connects related updates
+                    if item.project and existing_item.project and item.project.lower() == existing_item.project.lower():
+                        matching_key = k
+                        break
                     k_tokens = set(k.split())
                     union = norm_tokens | k_tokens
                     if not union:
                         continue
                     jaccard = len(norm_tokens & k_tokens) / len(union)
-                    if jaccard >= 0.6:
+                    common = norm_tokens & k_tokens
+                    if jaccard >= 0.35 or len(common) >= 2:
                         matching_key = k
                         break
 
@@ -637,13 +664,17 @@ class PersonWorkService:
                 item.updates = all_updates
 
                 # Preserve the established project / topic title if the newer update is a progress update
+                canonical_markers = (
+                    "canva", "polis", "event engine", "calendar", "ivan", "api",
+                    "email", "otp", "verification", "knowledge", "governance"
+                )
                 if ws_key:
-                    if any(k in existing.work_item.lower() for k in ("canva", "polis", "event engine", "calendar", "ivan", "api")):
+                    if any(k in existing.work_item.lower() for k in canonical_markers):
                         item.work_item = existing.work_item
                     else:
                         item.work_item = ws_key
-                elif any(k in existing.work_item.lower() for k in ("canva", "polis", "event engine", "calendar", "ivan", "api")):
-                    if not any(k in item.work_item.lower() for k in ("canva", "polis", "event engine", "calendar", "ivan", "api")):
+                elif any(k in existing.work_item.lower() for k in canonical_markers):
+                    if not any(k in item.work_item.lower() for k in canonical_markers):
                         item.work_item = existing.work_item
 
                 # If newer update is COMPLETED, update state to completed
@@ -685,11 +716,17 @@ class PersonWorkService:
         if not query_text:
             return "current_work"
         lowered = query_text.lower()
-        if any(w in lowered for w in ("blocked", "blocker", "dependency", "dependencies", "obstacle")):
+        if re.search(r"\b(?:what\s+has\s+changed|what\s+changed|changes?|diff)\b", lowered):
+            return "changes"
+        if re.search(r"\b(?:pending|remaining|still\s+(?:open|in\s+progress|ongoing)|outstanding)\b", lowered):
+            return "pending"
+        if re.search(r"\b(?:progress|how\s+far|advancement|status\s+update)\b", lowered):
+            return "progress"
+        if any(w in lowered for w in ("blocked", "blocker", "dependency", "dependencies", "obstacle", "impediment", "waiting on")):
             return "blockers"
-        if any(w in lowered for w in ("completed", "finished", "what has", "what did")):
+        if re.search(r"\b(?:completed|finished|shipped|closed|what\s+(?:has|did)\s+[a-zA-Z0-9_.-]+\s+(?:complete|finish|done))\b", lowered):
             return "completed"
-        if any(w in lowered for w in ("assigned", "assigned to", "delegated")):
+        if any(w in lowered for w in ("assigned", "assigned to", "delegated", "responsibilities", "responsible for")):
             return "assigned"
         if any(w in lowered for w in ("summary", "priorities", "priority", "overview")):
             return "summary_and_priorities"
@@ -777,8 +814,8 @@ class PersonWorkService:
         structured_evidence = "\n".join(evidence_lines)
         target_desc = f"{summary.person_name} (the user themselves)" if is_self else summary.person_name
 
-        prompt = f"""You are POLIS, a socially intelligent, capable teammate and organizational assistant.
-Generate a concise, natural, humanized response to the user's question using ONLY the structured work evidence provided below.
+        prompt = f"""You are POLIS, a knowledgeable, helpful human colleague and organizational intelligence assistant.
+Communicate naturally like a human colleague—NOT like a database search engine, mechanical reporter, or raw transcript dump.
 
 User question: {query_text}
 Target person: {target_desc}
@@ -788,32 +825,28 @@ Time window: past {summary.time_window_days} days
 Structured Work Evidence:
 {structured_evidence}
 
-Instructions:
-1. Speak naturally as an intelligent, helpful organizational assistant.
-2. Summarize actual work rather than repeating Slack conversations or quoting raw messages.
-3. Group related activities into projects or workstreams.
-4. Explain what the person is doing, what has progressed, and what remains.
-5. Identify the most important priorities.
-6. Mention completed work separately from ongoing work.
-7. Surface blockers only when evidence supports them.
-8. Use dates only when useful.
-9. Avoid unnecessary channel names, source IDs, message IDs, and raw metadata.
-10. Never invent responsibilities, deadlines, completion claims, or priorities.
-11. Clearly indicate uncertainty when the available evidence is insufficient.
-12. If the user asks about themselves ("What am I working on?", "my priorities"), address them directly in the second person ("You are currently focused on...", "Your priorities are..."). If the user asks about a colleague ("What is Gurkirat working on?"), use their name ("Gurkirat is currently working on...").
-13. Tailor the response to the user's specific intent:
-    - If asked specifically about blockers: focus primarily on blockers and dependencies.
-    - If asked specifically about completed work: focus primarily on what was completed.
-    - If asked for current work or a general summary: present the main focus, current progress, priorities, and any blockers or completed items if relevant.
-14. Use clean Markdown headers and bullet points where appropriate:
-    - Short introductory sentence.
-    - **Current Work**
-    - **Assigned Work and Commitments**
-    - **Recently Completed**
-    - **Blockers and Dependencies**
-    - **Overall Priorities**
+Core Instructions:
+1. Speak naturally and conversationally, directly addressing what the user asked.
+2. Form a complete, coherent understanding of workstreams (e.g. connected problem, assignment, and completion confirmations).
+3. Distinguish clearly between:
+   - Confirmed completed work
+   - Ongoing active work
+   - Assigned tasks and commitments
+   - Blockers and dependencies
+4. Never confuse a question about someone's work with evidence that they performed that work.
+5. If information is incomplete or unverified, acknowledge it conversationally (e.g., "I can see that [Person] has been involved in [Work], but I couldn't find a clear update confirming whether the remaining tasks have been completed.").
+6. If the user asks specifically about completed work, focus on verified completions. If they ask about current work, highlight ongoing focus and note completed work in proper context.
+7. Avoid unnecessary channel names, raw IDs, status codes, or explanations of how information was retrieved.
+8. If the user asks about themselves ("What am I working on?", "my priorities"), address them directly in the second person ("You have been focusing on..."). If asking about a colleague, use their name ("Hemant has been focusing on...").
+9. Where structured formatting helps readability, organize with clean headers and bullet points:
+   - Short natural opening statement.
+   - **Current Work**
+   - **Assigned Work and Commitments**
+   - **Recently Completed**
+   - **Blockers and Dependencies**
+   - **Overall Priorities**
 
-Return ONLY the response.
+Return ONLY the natural response.
 """
         return self._llm_client.generate(prompt)
 
@@ -825,79 +858,142 @@ Return ONLY the response.
     ) -> str:
         sections: list[str] = []
 
-        if is_self:
-            if query_focus == "blockers":
-                intro = "Here are the blockers and dependencies identified for your work:"
-            elif query_focus == "completed":
-                intro = "Here is a summary of the work you have recently completed:"
-            else:
-                intro = "Here is a summary of your current work and priorities:"
-        else:
-            if query_focus == "blockers":
-                intro = f"Here are the blockers and dependencies identified for {summary.person_name}:"
-            elif query_focus == "completed":
-                intro = f"Here is a summary of the work {summary.person_name} has recently completed:"
-            else:
-                intro = f"Here is a summary of recent work and priorities for {summary.person_name}:"
-        sections.append(intro)
-
-        if query_focus == "blockers" and summary.blockers:
-            lines = ["**Blockers and Dependencies**"]
-            for b in summary.blockers:
-                lines.append(f"• **{b.work_item}** — {b.latest_update}")
-            sections.append("\n".join(lines))
-        elif query_focus == "completed" and summary.completed_work:
-            lines = ["**Recently Completed**"]
-            for c in summary.completed_work:
-                lines.append(f"• **{c.work_item}** — {c.latest_update}")
-            sections.append("\n".join(lines))
-        else:
-            if summary.active_work:
-                lines = ["**Current Work**"]
-                for item in summary.active_work:
-                    desc = item.latest_update if item.latest_update and item.latest_update.lower() != item.work_item.lower() else "Active work"
-                    lines.append(f"• **{item.work_item}** — {desc}")
+        if query_focus == "blockers":
+            if summary.blockers:
+                intro = "Here are the blockers and dependencies identified for your work:" if is_self else f"Here are the blockers and dependencies identified for {summary.person_name}:"
+                sections.append(intro)
+                lines = ["**Blockers and Dependencies**"]
+                for b in summary.blockers:
+                    lines.append(f"• **{b.work_item}** — {b.latest_update}")
                 sections.append("\n".join(lines))
+            else:
+                target_str = "your work" if is_self else f"{summary.person_name}'s work"
+                sections.append(f"There are currently no recorded blockers or dependencies impeding {target_str}.")
+            return "\n\n".join(sections)
 
-            combined_commitments = summary.assigned_work + summary.commitments
-            if combined_commitments:
+        elif query_focus == "completed":
+            if summary.completed_work:
+                intro = "Here is a summary of the work you have recently completed:" if is_self else f"Here is a summary of the work {summary.person_name} has recently completed:"
+                sections.append(intro)
+                lines = ["**Recently Completed**"]
+                for c in summary.completed_work:
+                    lines.append(f"• **{c.work_item}** — {c.latest_update}")
+                sections.append("\n".join(lines))
+                if summary.active_work:
+                    ref_name = "Your" if is_self else f"{summary.person_name}'s"
+                    sections.append(f"{ref_name} other work, including {summary.active_work[0].work_item}, appears to be ongoing.")
+            else:
+                target_str = "you" if is_self else summary.person_name
+                if summary.active_work:
+                    sections.append(
+                        f"I checked recent records for {target_str}, but found no confirmed completed tasks in the past {summary.time_window_days} days. "
+                        f"Work on {summary.active_work[0].work_item} appears to be ongoing."
+                    )
+                else:
+                    sections.append(
+                        f"I checked recent records for {target_str}, but found no confirmed completed tasks in the past {summary.time_window_days} days."
+                    )
+            return "\n\n".join(sections)
+
+        elif query_focus == "pending":
+            pending_items = summary.active_work + summary.assigned_work + summary.commitments + summary.blockers
+            if pending_items:
+                intro = "Here is the pending and ongoing work identified for your projects:" if is_self else f"Here is the pending and ongoing work identified for {summary.person_name}:"
+                sections.append(intro)
+                if summary.active_work:
+                    lines = ["**Current Work**"]
+                    for item in summary.active_work:
+                        lines.append(f"• **{item.work_item}** — {item.latest_update}")
+                    sections.append("\n".join(lines))
+                combined_commitments = summary.assigned_work + summary.commitments
+                if combined_commitments:
+                    lines = ["**Assigned Work and Commitments**"]
+                    for item in combined_commitments:
+                        deadline_str = f" (Deadline: {item.deadline})" if item.deadline else ""
+                        lines.append(f"• **{item.work_item}** — {item.latest_update}{deadline_str}")
+                    sections.append("\n".join(lines))
+                if summary.blockers:
+                    lines = ["**Blockers and Dependencies**"]
+                    for item in summary.blockers:
+                        lines.append(f"• **{item.work_item}** — {item.latest_update}")
+                    sections.append("\n".join(lines))
+            else:
+                target_str = "you" if is_self else summary.person_name
+                sections.append(f"There are currently no pending tasks or active work recorded for {target_str}; all recent work appears to have been completed.")
+            return "\n\n".join(sections)
+
+        elif query_focus == "assigned":
+            combined_assigned = summary.assigned_work + summary.commitments
+            if combined_assigned:
+                intro = "Here are the tasks currently assigned to you:" if is_self else f"Here are the tasks currently assigned to {summary.person_name}:"
+                sections.append(intro)
                 lines = ["**Assigned Work and Commitments**"]
-                for item in combined_commitments:
+                for item in combined_assigned:
                     deadline_str = f" (Deadline: {item.deadline})" if item.deadline else ""
                     lines.append(f"• **{item.work_item}** — {item.latest_update}{deadline_str}")
                 sections.append("\n".join(lines))
+            else:
+                target_str = "you" if is_self else summary.person_name
+                sections.append(f"There are no explicit task assignments recorded for {target_str} in the past {summary.time_window_days} days.")
+            return "\n\n".join(sections)
 
-            if summary.completed_work:
-                lines = ["**Recently Completed**"]
-                for item in summary.completed_work:
-                    lines.append(f"• **{item.work_item}** — {item.latest_update}")
-                sections.append("\n".join(lines))
+        # General summary / current work / progress / changes
+        if is_self:
+            intro = "Here is a summary of your current work and priorities:"
+        else:
+            intro = f"Here is a summary of recent work and priorities for {summary.person_name}:"
+        sections.append(intro)
 
-            if summary.blockers and query_focus != "blockers":
-                lines = ["**Blockers and Dependencies**"]
-                for item in summary.blockers:
-                    lines.append(f"• **{item.work_item}** — {item.latest_update}")
-                sections.append("\n".join(lines))
+        if summary.active_work:
+            lines = ["**Current Work**"]
+            for item in summary.active_work:
+                desc = item.latest_update if item.latest_update and item.latest_update.lower() != item.work_item.lower() else "Active work"
+                lines.append(f"• **{item.work_item}** — {desc}")
+            sections.append("\n".join(lines))
 
-            if summary.discussions and not summary.active_work:
-                lines = ["**Recent Discussions**"]
-                for item in summary.discussions[:3]:
-                    lines.append(f"• **{item.work_item}**")
-                sections.append("\n".join(lines))
+        combined_commitments = summary.assigned_work + summary.commitments
+        if combined_commitments:
+            lines = ["**Assigned Work and Commitments**"]
+            for item in combined_commitments:
+                deadline_str = f" (Deadline: {item.deadline})" if item.deadline else ""
+                lines.append(f"• **{item.work_item}** — {item.latest_update}{deadline_str}")
+            sections.append("\n".join(lines))
 
-            priorities: list[str] = []
-            if summary.active_work:
-                priorities.extend([f"Continuing {item.work_item}" for item in summary.active_work[:2]])
-            if summary.blockers:
-                priorities.extend([f"Resolving blocker on {item.work_item}" for item in summary.blockers[:1]])
-            if summary.commitments:
-                priorities.extend([f"Upcoming commitment: {item.work_item}" for item in summary.commitments[:2]])
+        if summary.completed_work:
+            lines = ["**Recently Completed**"]
+            for item in summary.completed_work:
+                lines.append(f"• **{item.work_item}** — {item.latest_update}")
+            sections.append("\n".join(lines))
 
-            if priorities:
-                lines = ["**Overall Priorities**"]
-                for p in priorities:
-                    lines.append(f"• {p}")
-                sections.append("\n".join(lines))
+        if summary.blockers:
+            lines = ["**Blockers and Dependencies**"]
+            for item in summary.blockers:
+                lines.append(f"• **{item.work_item}** — {item.latest_update}")
+            sections.append("\n".join(lines))
+
+        if summary.discussions and not summary.active_work:
+            lines = ["**Recent Discussions**"]
+            for item in summary.discussions[:3]:
+                lines.append(f"• **{item.work_item}**")
+            sections.append("\n".join(lines))
+
+        priorities: list[str] = []
+        if summary.active_work:
+            priorities.extend([f"Continuing {item.work_item}" for item in summary.active_work[:2]])
+        if summary.blockers:
+            priorities.extend([f"Resolving blocker on {item.work_item}" for item in summary.blockers[:1]])
+        if summary.commitments:
+            priorities.extend([f"Upcoming commitment: {item.work_item}" for item in summary.commitments[:2]])
+
+        if priorities:
+            lines = ["**Overall Priorities**"]
+            for p in priorities:
+                lines.append(f"• {p}")
+            sections.append("\n".join(lines))
+
+        if summary.completed_work and summary.active_work:
+            ref_name = "His" if not is_self else "Your"
+            sections.append(f"The {summary.completed_work[0].work_item} fixes have also been completed, according to the latest recorded updates. {ref_name} other work appears to be ongoing.")
 
         return "\n\n".join(sections)
 

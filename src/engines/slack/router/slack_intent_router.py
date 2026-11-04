@@ -248,6 +248,7 @@ class SlackIntentRouter:
                 target_user = self._resolve_target_user(
                     text=question_text,
                     requester_user_id=message.user,
+                    context=conversation_context,
                 )
             elif (
                 detected is not None
@@ -289,6 +290,7 @@ class SlackIntentRouter:
                 target_user = self._resolve_target_user(
                     text=text,
                     requester_user_id=message.user,
+                    context=conversation_context,
                 )
 
             if target_user and target_user.get("is_ambiguous"):
@@ -330,12 +332,20 @@ class SlackIntentRouter:
 
             # Only persist conversation context for DMs and established threads
             if is_dm or is_thread:
+                target_meta = {}
+                if target_user and (target_user.get("id") or target_user.get("name")):
+                    target_meta = {
+                        "target_user_id": target_user.get("id"),
+                        "target_user_name": target_user.get("name"),
+                    }
                 updated_context = conversation_context.add_exchange(
                     user_message=original_user_message,
                     assistant_message=answer.text,
                     user_id=message.user,
                     pending_operation=getattr(answer, "pending_operation", None),
                     clear_pending=getattr(answer, "clear_pending", False),
+                    user_metadata=target_meta,
+                    assistant_metadata=target_meta,
                 )
                 try:
                     self._conversation_repository.save(
@@ -375,7 +385,8 @@ class SlackIntentRouter:
         self,
         text: str,
         requester_user_id: str,
-    ) -> dict[str, str] | None:
+        context: ConversationContext | None = None,
+    ) -> dict[str, Any] | None:
         """
         Resolve the person the question is about.
 
@@ -508,5 +519,78 @@ class SlackIntentRouter:
                 "id": requester_user_id,
                 "name": "",
             }
+
+        # ------------------------------------------------------
+        # FOLLOW-UP PRONOUN OR CONVERSATIONAL CONTINUITY
+        # ------------------------------------------------------
+        followup_cues = {"he", "him", "his", "she", "her", "hers", "they", "them", "their", "this person", "that person"}
+        has_followup_cue = any(
+            re.search(rf"\b{re.escape(c)}\b", normalized_text) for c in followup_cues
+        ) or any(
+            phrase in normalized_text for phrase in ("still pending", "what has changed", "remaining tasks", "what progress")
+        )
+        if has_followup_cue and context and getattr(context, "history", None):
+            for msg in reversed(context.history):
+                # 1. Direct metadata tracking
+                meta = msg.get("metadata") if isinstance(msg.get("metadata"), dict) else {}
+                meta_id = meta.get("target_user_id") or msg.get("target_user_id")
+                meta_name = meta.get("target_user_name") or msg.get("target_user_name")
+                if meta_id or meta_name:
+                    return {
+                        "id": meta_id,
+                        "name": meta_name or meta_id,
+                    }
+
+                content = (msg.get("content") or "").strip()
+
+                # 2. Match against workspace users in content
+                for u in users:
+                    u_names = [
+                        (u.get("profile", {}).get("display_name") or "").lower(),
+                        (u.get("real_name") or "").lower(),
+                        (u.get("name") or "").lower(),
+                    ]
+                    for un in u_names:
+                        if un and len(un) >= 2 and re.search(rf"\b{re.escape(un)}\b", content.lower()):
+                            disp = (
+                                u.get("profile", {}).get("display_name")
+                                or u.get("real_name")
+                                or u.get("name")
+                                or u["id"]
+                            )
+                            return {
+                                "id": u["id"],
+                                "name": disp,
+                            }
+
+                # 3. Match interrogative patterns in prior user question
+                m = re.search(r"\bwhat\s+(?:is|has)\s+([a-zA-Z0-9_.-]+)(?:\s+currently|\s+recently)?\s+(?:working|completed|done|handled|blocked)", content, re.IGNORECASE)
+                if m and m.group(1).lower() not in ("this", "that", "the", "he", "she", "they", "i", "we", "my", "your"):
+                    cand_name = m.group(1).strip()
+                    # Resolve ID if possible
+                    cand_id = None
+                    for u in users:
+                        if cand_name.lower() in ((u.get("profile", {}).get("display_name") or "").lower(), (u.get("real_name") or "").lower(), (u.get("name") or "").lower()):
+                            cand_id = u["id"]
+                            cand_name = u.get("profile", {}).get("display_name") or u.get("real_name") or u.get("name") or cand_name
+                            break
+                    return {
+                        "id": cand_id,
+                        "name": cand_name,
+                    }
+
+                # 4. Match assistant intro line (e.g. "recent work and priorities for Hemant:")
+                m2 = re.search(r"\b(?:for|concerning|regarding|about)\s+([A-Z][a-zA-Z0-9_.-]+)\b", content)
+                if m2 and m2.group(1).lower() not in ("you", "me", "this", "that", "the"):
+                    cand_name = m2.group(1).strip()
+                    cand_id = None
+                    for u in users:
+                        if cand_name.lower() in ((u.get("profile", {}).get("display_name") or "").lower(), (u.get("real_name") or "").lower(), (u.get("name") or "").lower()):
+                            cand_id = u["id"]
+                            break
+                    return {
+                        "id": cand_id,
+                        "name": cand_name,
+                    }
 
         return None
