@@ -347,6 +347,40 @@ class TestPersonWorkRetrieval:
         assert any("API integration" in item.work_item for item in summary.completed_work)
         assert not any("old API integration" in item.work_item and item.activity_type == WorkActivityType.ACTIVE_WORK for item in summary.active_work)
 
+    def test_multiple_identifiers_preserve_canonical_person_id(self, comm_repo, work_service):
+        """
+        Regression:
+        Messages found through an additional employee identifier must retain
+        the canonical employee ID in every extracted work item.
+        """
+        work_service._identity_service.get_all_identifiers_for_user.side_effect = (
+            lambda uid: [uid, "SLACK_HEMANT"] if uid == "U_HEMANT" else [uid]
+        )
+
+        now = datetime.now(timezone.utc)
+        comm_repo.save(
+            _build_comm_event(
+                "hemant_alias_msg",
+                "I am implementing the Organizational Event Engine.",
+                "SLACK_HEMANT",
+                "Hemant",
+                created_at=now - timedelta(hours=1),
+            )
+        )
+
+        summary = work_service.get_person_work_summary(
+            target_user_id="U_HEMANT",
+            target_user_name="Hemant",
+        )
+
+        assert summary.items
+        assert any(
+            "Organizational Event Engine" in item.work_item
+            for item in summary.active_work
+        )
+        assert all(item.person_id == "U_HEMANT" for item in summary.items)
+
+
     def test_empty_results_data_limitations_explanation(self, comm_repo, work_service):
         """
         Defect 13:

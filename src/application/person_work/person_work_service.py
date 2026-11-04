@@ -213,6 +213,7 @@ class PersonWorkService:
                 comm,
                 target_ids=all_ids,
                 target_name=display_name,
+                canonical_person_id=clean_target_id,
             )
             raw_items.extend(extracted)
 
@@ -319,6 +320,7 @@ class PersonWorkService:
         comm: CommunicationEvent,
         target_ids: set[str],
         target_name: str,
+        canonical_person_id: str,
     ) -> list[ExtractedWorkItem]:
         body = (comm.content.body or "").strip()
         if not body or self._is_ignorable_message(body):
@@ -361,7 +363,7 @@ class PersonWorkService:
                             timestamp=created_at,
                             source_channel=channel_name,
                             source_ts=source_ts,
-                            person_id=actor_internal,
+                            person_id=canonical_person_id,
                             person_name=actor_name,
                             evidence=f"Thread reply: \"{body}\" (Parent: \"{parent_body}\")",
                             is_parent_context=True,
@@ -387,7 +389,7 @@ class PersonWorkService:
                         timestamp=created_at,
                         source_channel=channel_name,
                         source_ts=source_ts,
-                        person_id=actor_internal,
+                        person_id=canonical_person_id,
                         person_name=actor_name,
                         evidence=body,
                     )
@@ -426,7 +428,7 @@ class PersonWorkService:
                         timestamp=created_at,
                         source_channel=channel_name,
                         source_ts=source_ts,
-                        person_id=list(target_ids)[0] if target_ids else "",
+                        person_id=canonical_person_id,
                         person_name=target_name,
                         evidence=f"Assigned by {actor_name}: \"{body}\"",
                     )
@@ -442,7 +444,7 @@ class PersonWorkService:
                         timestamp=created_at,
                         source_channel=channel_name,
                         source_ts=source_ts,
-                        person_id=list(target_ids)[0] if target_ids else "",
+                        person_id=canonical_person_id,
                         person_name=target_name,
                         evidence=f"Assigned by {actor_name}: \"{body}\"",
                     )
@@ -461,7 +463,7 @@ class PersonWorkService:
                             timestamp=created_at,
                             source_channel=channel_name,
                             source_ts=source_ts,
-                            person_id=list(target_ids)[0] if target_ids else "",
+                            person_id=canonical_person_id,
                             person_name=target_name,
                             evidence=f"Mentioned by {actor_name}: \"{body}\"",
                         )
