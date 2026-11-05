@@ -18,6 +18,8 @@ class SlackChannel:
 
     is_private: bool = False
 
+    members: list[str] | None = None
+
     def to_channel(self) -> Channel:
         """
         Convert this Slack channel into a Communication Channel.
@@ -31,13 +33,17 @@ class SlackChannel:
         else:
             channel_type = "public"
 
+        meta = {"platform": "slack", "slack_channel_id": self.channel_id}
+        if self.members:
+            meta["members"] = list(self.members)
+
         return Channel(
             identity=CommunicationIdentity(
                 internal_id=self.channel_id,
                 external_ids={"slack": self.channel_id},
-                metadata={"platform": "slack", "slack_channel_id": self.channel_id},
+                metadata=meta,
             ),
             name=self.name or self.channel_id,
             channel_type=channel_type,
-            metadata={"platform": "slack", "slack_channel_id": self.channel_id},
+            metadata=meta,
         )

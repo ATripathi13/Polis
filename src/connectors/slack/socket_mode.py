@@ -86,6 +86,17 @@ class SlackSocketMode:
 
         self._register_handlers()
 
+    def _get_verified_members(self, channel_id: str) -> list[str] | None:
+        try:
+            return self._identity_service.get_conversation_members(channel_id)
+        except Exception:
+            logger.warning(
+                "Failed to verify Slack conversation membership for channel %s",
+                channel_id,
+                exc_info=True,
+            )
+            return None
+
     def _register_handlers(self) -> None:
 
         @self._app.event("message")
@@ -148,6 +159,8 @@ class SlackSocketMode:
                     )
                     user_name = None
 
+            verified_members = self._get_verified_members(channel_id)
+
             slack_event = SlackEvent(
                 user=SlackUser(
                     user_id=user_id,
@@ -155,6 +168,7 @@ class SlackSocketMode:
                 ),
                 channel=SlackChannel(
                     channel_id=channel_id,
+                    members=verified_members,
                 ),
                 message=SlackMessage(
                     text=text,

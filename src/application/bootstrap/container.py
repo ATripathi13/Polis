@@ -5,6 +5,7 @@ Application container.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from application.cognitive import (
     SimpleCognitiveEngine,
@@ -119,4 +120,7 @@ class ApplicationContainer:
     workday_session_repository: WorkdaySessionRepository | None = None
     person_preference_repository: PersonPreferenceRepository | None = None
     person_work_service: Any | None = None
-
+    organizational_conversation_service: Any | None = None
+    conversation_summarizer_service: Any | None = None
+    team_directory_service: Any | None = None
+    priority_ranking_service: Any | None = None

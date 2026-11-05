@@ -42,7 +42,10 @@ POLIS has the following specialist capabilities and target agents:
 5. 'activity_service': Real-time work status, break tracking, shift start/end times.
 6. 'reminder_service': Setting personal or channel reminders.
 7. 'general_reasoner': Historical communications, multi-agent synthesis, conversational greetings, clarifications, employee work queries.
-8. Person-specific recent work, current tasks, commitments, blockers, or completed work queries (for self or specific colleagues) MUST be planned with intent 'employee_work_query' targeting 'general_reasoner'.
+8. 'conversation_summarizer': Channel and meeting conversation summarization, key decisions, suggestions, action items, private DM delivery. Intent: 'conversation_summary'.
+9. 'team_directory': Employee directory profiles, designations/roles, working hours, working days, time zones, responsibilities, upcoming approved leaves and holidays. Intent: 'hr_directory_query'.
+10. 'priority_tracker': Core team priorities, highest-ranking overarching tasks currently in progress, active sprint items, milestone blockers. Intent: 'priority_tracking_query'.
+11. Person-specific recent work, current tasks, commitments, blockers, or completed work queries (for self or specific colleagues) MUST be planned with intent 'employee_work_query' targeting 'general_reasoner'.
 
 Rules for planning:
 1. Select ONLY the specialists required for the request. Do not include unnecessary agents.
@@ -684,6 +687,46 @@ class CognitivePlanner:
             r"\bwhat\s+has\s+changed(?:\s+since\s+(?:the\s+)?(?:last|previous)\s+update)?\b",
             r"\bwhat\s+are\s+(?:his|her|their)\s+(?:priorities|tasks|responsibilities)\b",
         )
+
+        team_work_patterns = (
+            r"\bwhat\s+is\s+(?:everyone|everybody|the\s+team|the\s+whole\s+team|all\s+of\s+us)\s+(?:currently\s+)?working\s+on\b",
+            r"\bwhat\s+are\s+(?:we\s+all|people|the\s+team)\s+(?:currently\s+)?working\s+on\b",
+            r"\bwhat(?:'s|\s+is)\s+everyone\s+working\s+on\b",
+            r"\bwhat\s+is\s+everyone\s+doing\b",
+            r"\bwhat\s+are\s+all\s+team\s+members\s+working\s+on\b",
+            r"\bwhat\s+is\s+(?:the\s+team|everyone)\s+up\s+to\b",
+            r"\bteam\s+(?:current\s+)?work\s+summary\b",
+        )
+
+        is_team = any(re.search(pat, norm) for pat in team_work_patterns)
+        if is_team:
+            extracted_copy = extracted.model_copy(deep=True)
+            extracted_copy.extra_params["scope"] = "team"
+            extracted_copy.employee_names = [e for e in extracted_copy.employee_names if e.lower() not in ("everyone", "everybody", "team")]
+            extracted_copy.target_user_id = None
+            extracted_copy.target_user_name = None
+            return CognitivePlan(
+                request_id=request_id,
+                original_message=text,
+                intent=IntentCategory.EMPLOYEE_WORK_QUERY,
+                intent_confidence=0.95,
+                requested_outcome="Retrieve recent work and activity for the entire team",
+                entities=extracted_copy,
+                required_agents=[TargetAgent.GENERAL_REASONER],
+                execution_steps=[
+                    ExecutionStep(
+                        step_id="step_1",
+                        agent=TargetAgent.GENERAL_REASONER,
+                        action="team_work_summary",
+                        parameters={"scope": "team", "query": text},
+                    )
+                ],
+                missing_information=[],
+                requires_clarification=False,
+                clarification_prompt=None,
+                action_required=False,
+                risk_level="low",
+            )
 
         is_self = any(re.search(pat, norm) for pat in self_work_patterns)
         is_other = any(re.search(pat, norm) for pat in other_work_patterns)
@@ -1391,6 +1434,212 @@ class CognitivePlanner:
             )
 
         # ------------------------------------------------------------------
+        # E-Combined. Combined Multi-Domain Organizational Intelligence
+        # ------------------------------------------------------------------
+        has_discussion_kw = bool(re.search(r"\b(?:discussion|update|discuss|meeting|summarize|summary)\b", norm))
+        has_owner_kw = bool(re.search(r"\b(?:who\s+owns|owner|assigned\s+to|ownership)\b", norm))
+        has_priority_kw = bool(re.search(r"\b(?:priority|status|sprint|ranking)\b", norm))
+
+        if (has_discussion_kw and has_owner_kw and has_priority_kw) or (
+            "who owns" in norm and "priority" in norm
+        ):
+            step_1 = ExecutionStep(
+                step_id="step_1",
+                agent=TargetAgent.CONVERSATION_SUMMARIZER,
+                action="summarize_conversation",
+                action_type=ActionType.READ,
+                parameters={"query": text},
+            )
+            step_2 = ExecutionStep(
+                step_id="step_2",
+                agent=TargetAgent.TEAM_DIRECTORY,
+                action="query_employee_directory",
+                action_type=ActionType.READ,
+                parameters={"query": text},
+                dependencies=["step_1"],
+            )
+            step_3 = ExecutionStep(
+                step_id="step_3",
+                agent=TargetAgent.PRIORITY_TRACKER,
+                action="rank_priorities",
+                action_type=ActionType.READ,
+                parameters={"query": text},
+                dependencies=["step_2"],
+            )
+            return CognitivePlan(
+                request_id=request_id,
+                original_message=text,
+                intent=IntentCategory.MULTI_AGENT_QUERY,
+                intent_confidence=0.95,
+                requested_outcome="Synthesize conversation discussion, employee ownership, and project priority",
+                entities=extracted,
+                required_agents=[TargetAgent.CONVERSATION_SUMMARIZER, TargetAgent.TEAM_DIRECTORY, TargetAgent.PRIORITY_TRACKER],
+                execution_steps=[step_1, step_2, step_3],
+                missing_information=[],
+                requires_clarification=False,
+                clarification_prompt=None,
+                action_required=False,
+                risk_level="low",
+            )
+
+        # ------------------------------------------------------------------
+        # E-Priority. Core Team Priority Tracker
+        # ------------------------------------------------------------------
+        is_priority_tracker = bool(
+            re.search(
+                r"\b(?:highest[- ]priority(?:\s+team\s+task|\s+task|\s+item|\s+initiative)?|"
+                r"overarching\s+(?:team\s+)?task(?:\s+currently\s+in\s+progress)?|"
+                r"highest[- ]ranking(?:\s+overarching)?(?:\s+team)?\s+task(?:\s+currently\s+in\s+progress)?|"
+                r"team(?:\s+is)?\s+currently\s+focusing\s+on|"
+                r"most\s+important\s+active\s+sprint\s+item|"
+                r"blocking\s+the\s+current\s+milestone)\b",
+                norm,
+            )
+        )
+        if is_priority_tracker:
+            return CognitivePlan(
+                request_id=request_id,
+                original_message=text,
+                intent=IntentCategory.PRIORITY_TRACKING_QUERY,
+                intent_confidence=0.95,
+                requested_outcome="Identify highest-ranking overarching team task currently in progress",
+                entities=extracted,
+                required_agents=[TargetAgent.PRIORITY_TRACKER],
+                execution_steps=[
+                    ExecutionStep(
+                        step_id="step_1",
+                        agent=TargetAgent.PRIORITY_TRACKER,
+                        action="rank_priorities",
+                        action_type=ActionType.READ,
+                        parameters={"query": text},
+                    )
+                ],
+                missing_information=[],
+                requires_clarification=False,
+                clarification_prompt=None,
+                action_required=False,
+                risk_level="low",
+            )
+
+        # ------------------------------------------------------------------
+        # E-Summary. Channel Monitor & DM Summariser
+        # ------------------------------------------------------------------
+        is_summarize_query = bool(
+            re.search(r"\b(?:summarize|summarise|summary\s+of|give\s+me\s+a\s+summary)\b", norm)
+        )
+        if is_summarize_query:
+            send_privately = bool(re.search(r"\b(?:privately|in\s+dm|private\s+message|to\s+me\s+privately)\b", norm))
+            ch_match = re.search(r"#([a-zA-Z0-9_\-]+)", text)
+            target_channel = ch_match.group(1) if ch_match else ""
+            return CognitivePlan(
+                request_id=request_id,
+                original_message=text,
+                intent=IntentCategory.CONVERSATION_SUMMARY,
+                intent_confidence=0.95,
+                requested_outcome="Summarize conversation and deliver summary",
+                entities=extracted,
+                required_agents=[TargetAgent.CONVERSATION_SUMMARIZER],
+                execution_steps=[
+                    ExecutionStep(
+                        step_id="step_1",
+                        agent=TargetAgent.CONVERSATION_SUMMARIZER,
+                        action="summarize_conversation",
+                        action_type=ActionType.READ,
+                        parameters={
+                            "query": text,
+                            "channel": target_channel,
+                            "send_privately": send_privately,
+                        },
+                    )
+                ],
+                missing_information=[],
+                requires_clarification=False,
+                clarification_prompt=None,
+                action_required=False,
+                risk_level="low",
+            )
+
+        # ------------------------------------------------------------------
+        # E-Directory. HR & Team Directory Query
+        # ------------------------------------------------------------------
+        is_directory_query = bool(
+            re.search(
+                r"\b(?:what\s+is\s+[A-Za-z]+(?:\s+[A-Za-z]+)*'s\s+(?:role|designation|title|job)|"
+                r"what\s+are\s+[A-Za-z]+(?:\s+[A-Za-z]+)*'s\s+(?:responsibilities|working\s+hours|hours|schedule)|"
+                r"when\s+is\s+[A-Za-z]+(?:\s+[A-Za-z]+)*'s\s+next\s+scheduled\s+holiday|"
+                r"next\s+scheduled\s+holiday\s+for\s+[A-Za-z]+(?:\s+[A-Za-z]+)*|"
+                r"upcoming\s+leave\s+for\s+[A-Za-z]+(?:\s+[A-Za-z]+)*|"
+                r"who\s+is\s+(?:responsible\s+for|in\s+charge\s+of|handling)\s+[A-Za-z0-9_\- ]+)\b",
+                norm,
+            )
+        )
+        if is_directory_query:
+            return CognitivePlan(
+                request_id=request_id,
+                original_message=text,
+                intent=IntentCategory.HR_DIRECTORY_QUERY,
+                intent_confidence=0.95,
+                requested_outcome="Query employee directory profile, working hours, and schedule",
+                entities=extracted,
+                required_agents=[TargetAgent.TEAM_DIRECTORY],
+                execution_steps=[
+                    ExecutionStep(
+                        step_id="step_1",
+                        agent=TargetAgent.TEAM_DIRECTORY,
+                        action="query_employee_directory",
+                        action_type=ActionType.READ,
+                        parameters={"query": text},
+                    )
+                ],
+                missing_information=[],
+                requires_clarification=False,
+                clarification_prompt=None,
+                action_required=False,
+                risk_level="low",
+            )
+
+        # ------------------------------------------------------------------
+        # E0. Organizational Conversation & Topic Discussions
+        # ------------------------------------------------------------------
+        org_discussion_match = re.search(
+            r"\b(?:what\s+was\s+(?:our\s+)?latest\s+discussion\s+on|"
+            r"what(?:'s|\s+is)\s+happening\s+with\s+(?:the\s+)?|"
+            r"where\s+do\s+things\s+stand\s+with\s+(?:the\s+)?|"
+            r"did\s+we\s+decide\s+anything\s+about\s+(?:the\s+)?|"
+            r"what\s+decisions?\s+(?:have\s+we\s+made|did\s+we\s+make)\s+about\s+(?:the\s+)?|"
+            r"who\s+is\s+(?:handling|working\s+on|taking\s+care\s+of)\s+(?:the\s+)?|"
+            r"what\s+did\s+we\s+(?:discuss|decide)\s+about\s+(?:the\s+)?|"
+            r"what\s+(?:is|are)\s+the\s+latest\s+updates?\s+from\s+[A-Za-z]+|"
+            r"where\s+can\s+i\s+find\s+the\s+discussion\s+about|"
+            r"latest\s+discussion\s+on|"
+            r"latest\s+updates?\s+on)\b",
+            norm,
+        )
+        if org_discussion_match:
+            return CognitivePlan(
+                request_id=request_id,
+                original_message=text,
+                intent=IntentCategory.HISTORICAL_DISCUSSION,
+                intent_confidence=0.95,
+                requested_outcome="Retrieve organizational conversations and topic context",
+                entities=extracted,
+                required_agents=[TargetAgent.GENERAL_REASONER, TargetAgent.KNOWLEDGE_AGENT],
+                execution_steps=[
+                    ExecutionStep(
+                        step_id="step_1",
+                        agent=TargetAgent.GENERAL_REASONER,
+                        action="organizational_discussion",
+                        parameters={"query": text},
+                    )
+                ],
+                missing_information=[],
+                requires_clarification=False,
+                clarification_prompt=None,
+                action_required=False,
+                risk_level="low",
+            )
+
+        # ------------------------------------------------------------------
         # F. Task / Decision / Risk Queries (Operations)
         # ------------------------------------------------------------------
         if re.search(r"\b(?:decisions?|decided)\b", norm):
@@ -1870,7 +2119,7 @@ class CognitivePlanner:
         stopwords = {
             "today", "tomorrow", "yesterday", "noon", "what", "slack", "can", "could",
             "please", "polis", "ivan", "canva", "this", "that", "the", "my", "me", "i",
-            "he", "she", "they", "we", "all",
+            "he", "she", "they", "we", "all", "everyone", "everybody", "team",
         }
         for pat in work_name_patterns:
             for nm in re.findall(pat, text, flags=re.IGNORECASE):

@@ -24,6 +24,7 @@ from infrastructure.storage import (
 from application.cognitive import (
     CognitivePlanner,
     SimpleCognitiveEngine,
+    OrganizationalConversationService,
 )
 from application.person_work import (
     PersonWorkService,
@@ -513,6 +514,15 @@ def bootstrap(
         llm_client=llm_client,
     )
 
+    organizational_conversation_service = OrganizationalConversationService(
+        communication_repository=communication_repository,
+        identity_service=canonical_identity_service,
+        knowledge_retrieval_service=knowledge_base_retrieval,
+        operational_item_repository=operational_item_repository,
+        person_work_service=person_work_service,
+        llm_client=llm_client,
+    )
+
     planner = CognitivePlanner(
         llm_client=llm_client,
         identity_service=canonical_identity_service,
@@ -534,6 +544,7 @@ def bootstrap(
         operational_item_repository=operational_item_repository,
         identity_resolver=slack_identity_service,
         person_work_service=person_work_service,
+        organizational_conversation_service=organizational_conversation_service,
     )
     return ApplicationContainer(
         engine=engine,
@@ -563,7 +574,8 @@ def bootstrap(
         workday_session_repository=workday_session_repository,
         person_preference_repository=person_preference_repository,
         person_work_service=person_work_service,
+        organizational_conversation_service=organizational_conversation_service,
+        conversation_summarizer_service=engine.conversation_summarizer_service,
+        team_directory_service=engine.team_directory_service,
+        priority_ranking_service=engine.priority_ranking_service,
     )
-
-
-

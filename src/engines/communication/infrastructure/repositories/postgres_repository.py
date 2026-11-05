@@ -479,34 +479,145 @@ class PostgreSQLCommunicationRepository(
                     and r.correlation_business_id in parent_records_map
                 ):
                     p_rec = parent_records_map[r.correlation_business_id]
-                    p_body = (p_rec.content or {}).get("body", "")
-                    p_actor_name = (p_rec.actor or {}).get("display_name", "")
-                    p_channel_name = (p_rec.channel or {}).get("name", "")
-                    p_ts = p_rec.source_event_id
+                    r_ch_id = (r.channel or {}).get("identity", {}).get("internal_id") or (r.channel or {}).get("name")
+                    p_ch_id = (p_rec.channel or {}).get("identity", {}).get("internal_id") or (p_rec.channel or {}).get("name")
+                    if r_ch_id and p_ch_id and r_ch_id == p_ch_id:
+                        p_body = (p_rec.content or {}).get("body", "")
+                        p_actor_name = (p_rec.actor or {}).get("display_name", "")
+                        p_channel_name = (p_rec.channel or {}).get("name", "")
+                        p_ts = p_rec.source_event_id
 
-                    event.content.metadata["parent_message_body"] = p_body
-                    event.content.metadata["parent_actor_name"] = p_actor_name
-                    event.content.metadata["parent_channel_name"] = p_channel_name
-                    event.content.metadata["parent_ts"] = p_ts
+                        event.content.metadata["parent_message_body"] = p_body
+                        event.content.metadata["parent_actor_name"] = p_actor_name
+                        event.content.metadata["parent_channel_name"] = p_channel_name
+                        event.content.metadata["parent_ts"] = p_ts
 
-                    event.references.append(
-                        MessageReference(
-                            reference_id=p_ts,
-                            relationship_type="parent_message",
-                            source=r.source,
-                            metadata={
-                                "body": p_body,
-                                "author": p_actor_name,
-                                "channel": p_channel_name,
-                            },
-                        )
-                    )
+                        if not any(ref.reference_id == p_ts and ref.relationship_type == "parent_message" for ref in event.references):
+                            event.references.append(
+                                MessageReference(
+                                    reference_id=p_ts,
+                                    relationship_type="parent_message",
+                                    source=r.source,
+                                    metadata={
+                                        "body": p_body,
+                                        "author": p_actor_name,
+                                        "channel": p_channel_name,
+                                    },
+                                )
+                            )
 
                 events.append(event)
 
             return events
 
-            
+    def get_recent_events(
+        self,
+        *,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        limit: int = 500,
+        include_parent_context: bool = True,
+    ) -> list[CommunicationEvent]:
+        """
+        Retrieve recent communication events across all users and channels.
+        - Supports configurable start_time and end_time filters.
+        - Newest messages first (ORDER BY created_at DESC).
+        - Database-level filtering, ordering, and limiting.
+        - Thread parent context attachment for replies.
+        - Deduplication by source_event_id.
+        """
+        with SessionLocal() as session:
+            query = session.query(CommunicationEventModel)
+
+            if start_time is not None:
+                query = query.filter(CommunicationEventModel.created_at >= start_time)
+            if end_time is not None:
+                query = query.filter(CommunicationEventModel.created_at < end_time)
+
+            query = query.order_by(CommunicationEventModel.created_at.desc())
+
+            # Batch fetch so deduplication yields up to `limit` unique events
+            batch_size = max(limit, 10)
+            offset = 0
+            records = []
+            seen_source_ids = set()
+
+            while len(records) < limit:
+                batch = query.offset(offset).limit(batch_size).all()
+                if not batch:
+                    break
+                for r in batch:
+                    if r.source_event_id not in seen_source_ids:
+                        seen_source_ids.add(r.source_event_id)
+                        records.append(r)
+                        if len(records) >= limit:
+                            break
+                offset += batch_size
+                if len(batch) < batch_size:
+                    break
+
+            if not records:
+                return []
+
+            # Retrieve parent context for thread replies
+            parent_records_map = {}
+            if include_parent_context:
+                parent_source_ids = {
+                    r.correlation_business_id
+                    for r in records
+                    if r.correlation_business_id
+                    and r.correlation_business_id != r.source_event_id
+                }
+                if parent_source_ids:
+                    parents = (
+                        session.query(CommunicationEventModel)
+                        .filter(CommunicationEventModel.source_event_id.in_(parent_source_ids))
+                        .all()
+                    )
+                    parent_records_map = {p.source_event_id: p for p in parents}
+
+            events = []
+            for r in records:
+                event = self._to_domain(r)
+
+                # If reply, attach parent context (verifying same channel)
+                if (
+                    r.correlation_business_id
+                    and r.correlation_business_id != r.source_event_id
+                    and r.correlation_business_id in parent_records_map
+                ):
+                    p_rec = parent_records_map[r.correlation_business_id]
+                    r_ch_id = (r.channel or {}).get("identity", {}).get("internal_id") or (r.channel or {}).get("name")
+                    p_ch_id = (p_rec.channel or {}).get("identity", {}).get("internal_id") or (p_rec.channel or {}).get("name")
+                    if r_ch_id and p_ch_id and r_ch_id == p_ch_id:
+                        p_body = (p_rec.content or {}).get("body", "")
+                        p_actor_name = (p_rec.actor or {}).get("display_name", "")
+                        p_channel_name = (p_rec.channel or {}).get("name", "")
+                        p_ts = p_rec.source_event_id
+
+                        event.content.metadata["parent_message_body"] = p_body
+                        event.content.metadata["parent_actor_name"] = p_actor_name
+                        event.content.metadata["parent_channel_name"] = p_channel_name
+                        event.content.metadata["parent_ts"] = p_ts
+
+                        if not any(ref.reference_id == p_ts and ref.relationship_type == "parent_message" for ref in event.references):
+                            event.references.append(
+                                MessageReference(
+                                    reference_id=p_ts,
+                                    relationship_type="parent_message",
+                                    source=r.source,
+                                    metadata={
+                                        "body": p_body,
+                                        "author": p_actor_name,
+                                        "channel": p_channel_name,
+                                    },
+                                )
+                            )
+
+                events.append(event)
+
+            return events
+
     @staticmethod
     def _actor_to_dict(
         actor: Actor,

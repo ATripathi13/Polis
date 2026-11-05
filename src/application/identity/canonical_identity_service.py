@@ -14,6 +14,25 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_WORKSPACE_USERS: dict[str, dict[str, str]] = {
+    "U0BB8T4BVEK": {"display_name": "Akshat", "real_name": "Akshat", "title": "AI Agent Implementor"},
+    "U0BBHB87SJF": {"display_name": "Nav Thethi", "real_name": "Nav Thethi", "title": ""},
+    "U0BBPU6400M": {"display_name": "Gurkirat Singh", "real_name": "Gurkirat Singh", "title": ""},
+    "U0BBRSJCR7U": {"display_name": "Pravesh Verma", "real_name": "Pravesh Verma", "title": ""},
+    "U0BBWLMNVGC": {"display_name": "Nishchay", "real_name": "Nishchay", "title": ""},
+    "U0BMLJD003G": {"display_name": "Vijay", "real_name": "Vijay", "title": ""},
+    "U0BU41F6CTD": {"display_name": "Hemant Kumar Sah", "real_name": "Hemant Kumar Sah", "title": ""},
+    "U0C3EE6L8AE": {"display_name": "Vijay Sharma", "real_name": "Vijay Sharma", "title": ""},
+    "U0C3J7DBX36": {"display_name": "Nishchay", "real_name": "Nishchay", "title": ""},
+    "U0C3J7FJ1BN": {"display_name": "Akshat Tripathi", "real_name": "Akshat Tripathi", "title": ""},
+}
+
+_DEFAULT_WORKSPACE_CHANNELS: dict[str, str] = {
+    "C0BG7NWMD6D": "agentic-army",
+    "C0BBMKRD4R4": "agentic-army",
+    "C0C3BGUGAFK": "testing",
+}
+
 
 class CanonicalIdentityService:
     """
@@ -36,6 +55,7 @@ class CanonicalIdentityService:
         self._directory_provider = directory_provider
         self._user_cache: dict[tuple[str, str], CanonicalEmployeeIdentity] = {}
         self._channel_cache: dict[tuple[str, str], CanonicalChannelIdentity] = {}
+        self._channel_registry: dict[str, str] = dict(_DEFAULT_WORKSPACE_CHANNELS)
         self._email_to_canonical_id: dict[str, str] = {}
         self._platform_to_canonical_id: dict[tuple[str, str], str] = {}
         self._canonical_to_external_ids: dict[str, dict[str, str]] = {}
@@ -99,6 +119,11 @@ class CanonicalIdentityService:
                         exc_info=True,
                     )
 
+        if not real_name and clean_user_id in _DEFAULT_WORKSPACE_USERS:
+            fallback_u = _DEFAULT_WORKSPACE_USERS[clean_user_id]
+            display_name = fallback_u.get("display_name") or clean_user_id
+            real_name = fallback_u.get("real_name") or display_name
+
         # Cross-platform canonical employee internal ID unification:
         norm_email = email.lower().strip() if email else ""
         if norm_email:
@@ -107,10 +132,15 @@ class CanonicalIdentityService:
             status = IdentityResolutionStatus.RESOLVED
         else:
             canonical_id = self._platform_to_canonical_id.get((platform, clean_user_id)) or clean_user_id
+            is_name_resolved = bool(
+                (real_name and not self._is_raw_id(real_name))
+                or (display_name and not self._is_raw_id(display_name) and display_name != clean_user_id)
+                or (display_name_hint and display_name_hint != clean_user_id)
+            )
             status = (
-                IdentityResolutionStatus.PROVISIONAL
-                if display_name_hint and display_name_hint != clean_user_id
-                else IdentityResolutionStatus.UNRESOLVED
+                IdentityResolutionStatus.RESOLVED
+                if (real_name and not self._is_raw_id(real_name))
+                else (IdentityResolutionStatus.PROVISIONAL if is_name_resolved else IdentityResolutionStatus.UNRESOLVED)
             )
 
         # Maintain cross-platform mapping of external identifiers
@@ -259,6 +289,48 @@ class CanonicalIdentityService:
                     exc_info=True,
                 )
 
+        # Fallback to registered user cache and verified workspace users
+        norm_target = " ".join(cleaned.lower().split())
+        # Phase 1: Exact name matching
+        exact_matches = set()
+        for (plat, uid), ident in self._user_cache.items():
+            names = {ident.canonical_name.lower().strip(), ident.display_name.lower().strip()}
+            names.discard("")
+            if norm_target in names:
+                exact_matches.add(uid)
+        for uid, info in _DEFAULT_WORKSPACE_USERS.items():
+            names = {info.get("display_name", "").lower().strip(), info.get("real_name", "").lower().strip()}
+            names.discard("")
+            if norm_target in names:
+                exact_matches.add(uid)
+
+        if len(exact_matches) == 1:
+            return self.resolve_user(list(exact_matches)[0], platform=platform)
+        elif len(exact_matches) > 1:
+            logger.warning("Ambiguous exact employee match for '%s'; refusing to guess.", cleaned)
+            return None
+
+        # Phase 2: Word-boundary matching (e.g. 'Hemant' matching 'Hemant Kumar Sah')
+        # Never use loose substring matching (e.g. 'an' must NOT match 'Hemant')
+        word_matches = set()
+        pattern = re.compile(rf"\b{re.escape(norm_target)}\b", re.IGNORECASE)
+        for (plat, uid), ident in self._user_cache.items():
+            names = {ident.canonical_name.lower().strip(), ident.display_name.lower().strip()}
+            names.discard("")
+            if any(pattern.search(n) for n in names):
+                word_matches.add(uid)
+        for uid, info in _DEFAULT_WORKSPACE_USERS.items():
+            names = {info.get("display_name", "").lower().strip(), info.get("real_name", "").lower().strip()}
+            names.discard("")
+            if any(pattern.search(n) for n in names):
+                word_matches.add(uid)
+
+        if len(word_matches) == 1:
+            return self.resolve_user(list(word_matches)[0], platform=platform)
+        elif len(word_matches) > 1:
+            logger.warning("Ambiguous word-boundary employee match for '%s'; refusing to guess.", cleaned)
+            return None
+
         return None
 
     def resolve_channel(
@@ -284,37 +356,178 @@ class CanonicalIdentityService:
         if cache_key in self._channel_cache:
             return self._channel_cache[cache_key]
 
-        # Determine channel type
+        # Determine channel type and resolution
+        is_resolved = False
+        resolved_name = None
+        if clean_channel_id in self._channel_registry:
+            resolved_name = self._channel_registry[clean_channel_id]
+            is_resolved = True
+        elif channel_name_hint and not self._is_raw_id(channel_name_hint):
+            resolved_name = channel_name_hint.lstrip("#").strip()
+            is_resolved = True
+
         if clean_channel_id.startswith("D"):
             channel_type = "im"
-            channel_name = channel_name_hint or f"dm-{clean_channel_id}"
+            channel_name = resolved_name or channel_name_hint or f"dm-{clean_channel_id}"
         elif clean_channel_id.startswith("G"):
             channel_type = "mpim"
-            channel_name = channel_name_hint or f"group-dm-{clean_channel_id}"
+            channel_name = resolved_name or channel_name_hint or f"group-dm-{clean_channel_id}"
         elif clean_channel_id.startswith("C"):
             channel_type = "private" if is_private_hint else "public"
-            channel_name = channel_name_hint or clean_channel_id
+            channel_name = resolved_name or channel_name_hint or clean_channel_id
         elif platform in (PlatformType.TEAMS.value, "microsoft_teams"):
             channel_type = "meeting" if "meeting" in clean_channel_id.lower() else "channel"
-            channel_name = channel_name_hint or clean_channel_id
+            channel_name = resolved_name or channel_name_hint or clean_channel_id
         else:
-            channel_type = "public"
-            channel_name = channel_name_hint or clean_channel_id
+            channel_type = "unknown"
+            channel_name = resolved_name or channel_name_hint or clean_channel_id
 
         identity = CanonicalChannelIdentity(
             platform=platform,
             platform_channel_id=clean_channel_id,
             channel_name=channel_name,
             channel_type=channel_type,
-            metadata={"external_id": clean_channel_id},
+            metadata={"external_id": clean_channel_id, "is_resolved": is_resolved},
         )
         self._channel_cache[cache_key] = identity
         return identity
+
+    def register_user(
+        self,
+        canonical_name: str,
+        platform_user_id: str,
+        platform: str = PlatformType.SLACK.value,
+    ) -> None:
+        """Register a known user mapping."""
+        if not platform_user_id or not platform_user_id.strip():
+            return
+        clean_id = platform_user_id.strip()
+        clean_name = canonical_name.strip()
+        identity = CanonicalEmployeeIdentity(
+            internal_id=f"emp_{clean_id}",
+            canonical_name=clean_name,
+            platform=platform,
+            platform_user_id=clean_id,
+            display_name=clean_name,
+            resolution_status=IdentityResolutionStatus.RESOLVED,
+            metadata={"external_ids": {platform: clean_id}, "is_resolved": True},
+        )
+        self._user_cache[(platform, clean_id)] = identity
+        self._platform_to_canonical_id[(platform, clean_id)] = f"emp_{clean_id}"
+
+    def register_channel(self, channel_id: str, channel_name: str) -> None:
+        """Register a known channel mapping."""
+        if not channel_id or not channel_id.strip():
+            return
+        clean_id = channel_id.strip()
+        clean_name = channel_name.strip().lstrip("#")
+        self._channel_registry[clean_id] = clean_name
+        self._channel_cache.pop((PlatformType.SLACK.value, clean_id), None)
+
+    def get_channel_name(self, channel_id: str) -> str | None:
+        """Return the resolved channel name without prefix, or None if unresolved."""
+        if not channel_id:
+            return None
+        clean = channel_id.strip()
+        identity = self.resolve_channel(clean)
+        name = identity.channel_name
+        if name and not self._is_raw_id(name) and identity.metadata.get("is_resolved", True):
+            return name.lstrip("#").strip()
+        return None
+
+    def format_channel_name(self, channel_id: str) -> str:
+        """
+        Format a channel ID into its human-readable user-facing representation.
+        Always returns a human name prefixed with '#' (e.g. #agentic-army).
+        If unresolved, returns 'an unverified channel' and never exposes the raw ID.
+        """
+        if not channel_id:
+            return "an unverified channel"
+        clean = channel_id.strip()
+        name = self.get_channel_name(clean)
+        if name:
+            return f"#{name}"
+        return "an unverified channel"
+
+    def format_user_name(self, user_id: str) -> str:
+        """
+        Format a user ID into its human-readable user-facing representation.
+        Always returns the resolved person name.
+        If unresolved, returns 'an unverified team member' and never exposes the raw ID.
+        """
+        if not user_id:
+            return "an unverified team member"
+        clean = user_id.strip()
+        identity = self.resolve_user(clean)
+        name = identity.canonical_name or identity.display_name
+        if name and not self._is_raw_id(name) and identity.resolution_status != IdentityResolutionStatus.UNRESOLVED:
+            return name
+        return "an unverified team member"
+
+    @classmethod
+    def _is_raw_id(cls, val: str) -> bool:
+        """Check whether a string represents a raw Slack or Teams platform identifier."""
+        if not val or not isinstance(val, str):
+            return False
+        clean = val.strip().lstrip("#@").strip()
+        return bool(re.fullmatch(r"[UWC][A-Z0-9]{7,}", clean) or clean.startswith("29:"))
+
+    def sanitize_user_facing_text(self, text: str) -> str:
+        """
+        Ensure no raw Slack user IDs or channel IDs leak into user-facing conversational text.
+        Replaces:
+        - <@U...> or <@U...|name> -> @ResolvedName or 'an unverified team member'
+        - <#C...> or <#C...|name> -> #ResolvedChannel or 'an unverified channel'
+        - Bare U0... / W0... -> ResolvedName or 'an unverified team member'
+        - Bare C0... -> #ResolvedChannel or 'an unverified channel'
+        """
+        if not text:
+            return ""
+        if not isinstance(text, str):
+            text = str(text)
+
+        def replace_user_mention(m):
+            uid = m.group(1)
+            label = m.group(2)
+            res_name = self.format_user_name(uid)
+            if res_name and res_name != "an unverified team member":
+                return f"@{res_name}"
+            if label and not self._is_raw_id(label) and label.lower() not in ("here", "channel", "everyone", "polis", "bot"):
+                return f"@{label.strip()}"
+            return "an unverified team member"
+
+        def replace_channel_mention(m):
+            cid = m.group(1)
+            label = m.group(2)
+            if label and not self._is_raw_id(label):
+                return f"#{label.strip().lstrip('#')}"
+            return self.format_channel_name(cid)
+
+        # 1. Slack syntax mentions
+        sanitized = re.sub(r"<@([A-Z0-9_.-]+)(?:\|([^>]+))?>", replace_user_mention, text)
+        sanitized = re.sub(r"<#([A-Z0-9_.-]+)(?:\|([^>]+))?>", replace_channel_mention, sanitized)
+
+        # 2. Bare channel IDs (C followed by 8+ alphanumeric chars)
+        def replace_bare_channel(m):
+            cid = m.group(0)
+            return self.format_channel_name(cid)
+
+        sanitized = re.sub(r"\bC[A-Z0-9]{8,}\b", replace_bare_channel, sanitized)
+
+        # 3. Bare user IDs (U or W followed by 8+ alphanumeric chars)
+        def replace_bare_user(m):
+            uid = m.group(0)
+            return self.format_user_name(uid)
+
+        sanitized = re.sub(r"\b[UW][A-Z0-9]{8,}\b", replace_bare_user, sanitized)
+
+        return sanitized
 
     def clear_cache(self) -> None:
         """Clear the in-memory resolution caches."""
         self._user_cache.clear()
         self._channel_cache.clear()
+        self._channel_registry = dict(_DEFAULT_WORKSPACE_CHANNELS)
         self._email_to_canonical_id.clear()
         self._platform_to_canonical_id.clear()
         self._canonical_to_external_ids.clear()

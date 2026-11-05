@@ -119,6 +119,10 @@ class SimpleCognitiveEngine(
         operational_item_repository: OperationalItemRepository | None = None,
         identity_resolver: Any | None = None,
         person_work_service: Any | None = None,
+        organizational_conversation_service: Any | None = None,
+        conversation_summarizer_service: Any | None = None,
+        team_directory_service: Any | None = None,
+        priority_ranking_service: Any | None = None,
     ) -> None:
 
         self._pipeline = pipeline
@@ -154,6 +158,78 @@ class SimpleCognitiveEngine(
         self._identity_resolver = identity_resolver
         self._person_work_service = person_work_service
 
+        if organizational_conversation_service is not None:
+            self._organizational_conversation_service = organizational_conversation_service
+        else:
+            try:
+                from application.cognitive.organizational_conversation_service import OrganizationalConversationService
+                comm_repo = getattr(question_answering, "_communication_repository", None)
+                llm = getattr(question_answering, "_llm_client", None) or getattr(planner, "_llm_client", None)
+                id_svc = identity_resolver if hasattr(identity_resolver, "sanitize_user_facing_text") else (
+                    getattr(planner, "_identity_service", None)
+                )
+                self._organizational_conversation_service = OrganizationalConversationService(
+                    communication_repository=comm_repo,
+                    identity_service=id_svc,
+                    knowledge_retrieval_service=knowledge_base_retrieval_service or knowledge_agent,
+                    operational_item_repository=operational_item_repository,
+                    person_work_service=person_work_service,
+                    llm_client=llm,
+                )
+            except Exception as e:
+                logger.warning("Could not initialize OrganizationalConversationService: %s", e)
+                self._organizational_conversation_service = None
+
+        if conversation_summarizer_service is not None:
+            self._conversation_summarizer_service = conversation_summarizer_service
+        else:
+            try:
+                from application.cognitive.conversation_summarizer_service import ConversationSummarizerService
+                from engines.slack.services.slack_client import SlackClient
+                comm_repo = getattr(question_answering, "_communication_repository", None)
+                llm = getattr(question_answering, "_llm_client", None) or getattr(planner, "_llm_client", None)
+                id_svc = identity_resolver if hasattr(identity_resolver, "sanitize_user_facing_text") else (
+                    getattr(planner, "_identity_service", None)
+                )
+                self._conversation_summarizer_service = ConversationSummarizerService(
+                    communication_repository=comm_repo,
+                    slack_client=SlackClient(),
+                    identity_service=id_svc,
+                    llm_client=llm,
+                )
+            except Exception as e:
+                logger.warning("Could not initialize ConversationSummarizerService: %s", e)
+                self._conversation_summarizer_service = None
+
+        if team_directory_service is not None:
+            self._team_directory_service = team_directory_service
+        else:
+            try:
+                from application.directory.team_directory_service import TeamDirectoryService
+                id_svc = identity_resolver if hasattr(identity_resolver, "sanitize_user_facing_text") else (
+                    getattr(planner, "_identity_service", None)
+                )
+                self._team_directory_service = TeamDirectoryService(
+                    identity_service=id_svc,
+                    calendar_agent=calendar_agent,
+                    person_work_service=person_work_service,
+                )
+            except Exception as e:
+                logger.warning("Could not initialize TeamDirectoryService: %s", e)
+                self._team_directory_service = None
+
+        if priority_ranking_service is not None:
+            self._priority_ranking_service = priority_ranking_service
+        else:
+            try:
+                from application.operations.priority_ranking_service import PriorityRankingService
+                self._priority_ranking_service = PriorityRankingService(
+                    operational_item_repository=operational_item_repository
+                )
+            except Exception as e:
+                logger.warning("Could not initialize PriorityRankingService: %s", e)
+                self._priority_ranking_service = None
+
         if planner is not None:
             self._planner = planner
         else:
@@ -178,6 +254,10 @@ class SimpleCognitiveEngine(
         return self._person_work_service
 
     @property
+    def organizational_conversation_service(self):
+        return self._organizational_conversation_service
+
+    @property
     def knowledge_agent(self):
         return self._knowledge_agent
 
@@ -196,6 +276,19 @@ class SimpleCognitiveEngine(
     @property
     def meeting_intelligence_service(self):
         return self._meeting_intelligence_service
+
+    @property
+    def conversation_summarizer_service(self):
+        return self._conversation_summarizer_service
+
+    @property
+    def team_directory_service(self):
+        return self._team_directory_service
+
+    @property
+    def priority_ranking_service(self):
+        return self._priority_ranking_service
+
 
     def learn(
         self,
@@ -702,6 +795,99 @@ class SimpleCognitiveEngine(
                 return self._dispatch_task_action(plan, question, context)
 
         # ------------------------------------------------------
+        # CONVERSATION SUMMARY / CHANNEL MONITORING
+        # ------------------------------------------------------
+        if plan.intent == IntentCategory.CONVERSATION_SUMMARY:
+            if self._conversation_summarizer_service is not None:
+                step_params = plan.execution_steps[0].parameters if plan.execution_steps else {}
+                target_channel = step_params.get("channel") or getattr(context, "channel_id", "") or "general"
+                send_privately = step_params.get("send_privately", False) or bool(
+                    re.search(r"\b(?:privately|in\s+dm|private\s+message|to\s+me\s+privately)\b", question.text, re.I)
+                )
+                req_user = getattr(context, "user_id", "") or getattr(question, "user_id", "") or "requester"
+                try:
+                    summary_res = self._conversation_summarizer_service.execute_private_summary_workflow(
+                        channel_id=target_channel,
+                        requesting_user_id=req_user,
+                        channel_name=f"#{target_channel}" if not target_channel.startswith("#") else target_channel,
+                        send_private_dm=send_privately,
+                    )
+                    if summary_res.delivered_privately:
+                        text = f"I've generated the conversation summary for **{target_channel}** and delivered it to you privately via DM."
+                    else:
+                        text = summary_res.formatted_text
+                    return Answer(
+                        text=self._sanitize_user_facing_response(text),
+                        confidence=1.0,
+                        is_conversational=True,
+                        clear_pending=True,
+                    )
+                except PermissionError as pe:
+                    return Answer(
+                        text=f"⚠️ {str(pe)}",
+                        confidence=0.9,
+                        is_conversational=True,
+                        clear_pending=True,
+                    )
+                except Exception as exc:
+                    logger.warning("Conversation summarization error: %s", exc)
+
+            if self._organizational_conversation_service is not None:
+                org_ans = self._organizational_conversation_service.answer_question(question, context)
+                from dataclasses import replace
+                return replace(org_ans, text=self._sanitize_user_facing_response(org_ans.text))
+
+        # ------------------------------------------------------
+        # HR & TEAM DIRECTORY QUERY
+        # ------------------------------------------------------
+        if plan.intent == IntentCategory.HR_DIRECTORY_QUERY:
+            if self._team_directory_service is not None:
+                ans_text = self._team_directory_service.answer_directory_query(question.text)
+                return Answer(
+                    text=self._sanitize_user_facing_response(ans_text),
+                    confidence=1.0,
+                    is_conversational=True,
+                    clear_pending=True,
+                )
+
+        # ------------------------------------------------------
+        # CORE TEAM PRIORITY TRACKER
+        # ------------------------------------------------------
+        if plan.intent == IntentCategory.PRIORITY_TRACKING_QUERY:
+            if self._priority_ranking_service is not None:
+                prio_text = self._priority_ranking_service.answer_priority_query(question.text)
+                return Answer(
+                    text=self._sanitize_user_facing_response(prio_text),
+                    confidence=1.0,
+                    is_conversational=True,
+                    clear_pending=True,
+                )
+
+        # ------------------------------------------------------
+        # MULTI-AGENT / COMBINED ORGANIZATIONAL INTELLIGENCE
+        # ------------------------------------------------------
+        if plan.intent == IntentCategory.MULTI_AGENT_QUERY and any(
+            ag in (TargetAgent.CONVERSATION_SUMMARIZER, TargetAgent.TEAM_DIRECTORY, TargetAgent.PRIORITY_TRACKER)
+            for ag in plan.required_agents
+        ):
+            combined_text = self._handle_multi_domain_intelligence_query(question, context, plan)
+            return Answer(
+                text=self._sanitize_user_facing_response(combined_text),
+                confidence=1.0,
+                is_conversational=True,
+                clear_pending=True,
+            )
+
+        # ------------------------------------------------------
+        # HISTORICAL DISCUSSION / ORGANIZATIONAL CONVERSATIONS
+        # ------------------------------------------------------
+        if plan.intent in (IntentCategory.HISTORICAL_DISCUSSION, getattr(IntentCategory, "ORGANIZATIONAL_INTELLIGENCE", "historical_discussion")):
+            if self._organizational_conversation_service is not None:
+                org_ans = self._organizational_conversation_service.answer_question(question, context)
+                from dataclasses import replace
+                return replace(org_ans, text=self._sanitize_user_facing_response(org_ans.text))
+
+        # ------------------------------------------------------
         # EMPLOYEE WORK QUERY (Person-Specific Work & Tasks)
         # ------------------------------------------------------
         if plan.intent == IntentCategory.EMPLOYEE_WORK_QUERY:
@@ -1104,6 +1290,72 @@ class SimpleCognitiveEngine(
 
             if step.agent == TargetAgent.KNOWLEDGE_AGENT:
                 return self._execute_knowledge_step(step, plan, resolved_parameters, question, context)
+
+            if step.agent == TargetAgent.CONVERSATION_SUMMARIZER:
+                if self._conversation_summarizer_service is not None:
+                    ch = resolved_parameters.get("channel", "")
+                    send_p = resolved_parameters.get("send_privately", False)
+                    req_u = getattr(context, "user_id", "") or getattr(question, "user_id", "") or "requester"
+                    res = self._conversation_summarizer_service.execute_private_summary_workflow(
+                        channel_id=ch or "general",
+                        requesting_user_id=req_u,
+                        channel_name=ch,
+                        send_private_dm=send_p,
+                    )
+                    text = res.formatted_text if not res.delivered_privately else f"Summary delivered privately to DM ({res.delivery_channel_id})."
+                    return StepExecutionResult(
+                        step_id=step.step_id,
+                        agent=step.agent,
+                        action=step.action,
+                        status=StepExecutionStatus.SUCCEEDED,
+                        output_fields={"summary": res.formatted_text},
+                        answer=text,
+                    )
+                return StepExecutionResult(
+                    step_id=step.step_id,
+                    agent=step.agent,
+                    action=step.action,
+                    status=StepExecutionStatus.FAILED,
+                    error="Conversation summarizer service is not configured.",
+                )
+
+            if step.agent == TargetAgent.TEAM_DIRECTORY:
+                if self._team_directory_service is not None:
+                    ans_text = self._team_directory_service.answer_directory_query(question.text)
+                    return StepExecutionResult(
+                        step_id=step.step_id,
+                        agent=step.agent,
+                        action=step.action,
+                        status=StepExecutionStatus.SUCCEEDED,
+                        output_fields={"directory_info": ans_text},
+                        answer=ans_text,
+                    )
+                return StepExecutionResult(
+                    step_id=step.step_id,
+                    agent=step.agent,
+                    action=step.action,
+                    status=StepExecutionStatus.FAILED,
+                    error="Team directory service is not configured.",
+                )
+
+            if step.agent == TargetAgent.PRIORITY_TRACKER:
+                if self._priority_ranking_service is not None:
+                    prio_text = self._priority_ranking_service.answer_priority_query(question.text)
+                    return StepExecutionResult(
+                        step_id=step.step_id,
+                        agent=step.agent,
+                        action=step.action,
+                        status=StepExecutionStatus.SUCCEEDED,
+                        output_fields={"priority_info": prio_text},
+                        answer=prio_text,
+                    )
+                return StepExecutionResult(
+                    step_id=step.step_id,
+                    agent=step.agent,
+                    action=step.action,
+                    status=StepExecutionStatus.FAILED,
+                    error="Priority ranking service is not configured.",
+                )
 
             if step.agent == TargetAgent.GENERAL_REASONER:
                 ans = self._question_answering.answer(question)
@@ -3524,6 +3776,16 @@ class SimpleCognitiveEngine(
             clear_pending=False,
         )
 
+    def _sanitize_user_facing_response(self, text: str) -> str:
+        """Ensure no raw Slack user IDs or channel IDs leak into user answers."""
+        if not text:
+            return ""
+        if hasattr(self._identity_resolver, "sanitize_user_facing_text"):
+            return self._identity_resolver.sanitize_user_facing_text(text)
+        if hasattr(self._planner, "_identity_service") and hasattr(self._planner._identity_service, "sanitize_user_facing_text"):
+            return self._planner._identity_service.sanitize_user_facing_text(text)
+        return text
+
     # =========================================================================
     # PERSONALIZED MORNING GREETING & TASK BRIEFING
     # =========================================================================
@@ -3850,6 +4112,24 @@ class SimpleCognitiveEngine(
         """
         Handle person-specific recent work and task retrieval via PersonWorkService.
         """
+        step_params = plan.execution_steps[0].parameters if plan.execution_steps else {}
+
+        # Team-wide work aggregation check
+        is_team_scope = bool(
+            plan.entities.extra_params.get("scope") == "team"
+            or step_params.get("scope") == "team"
+            or (plan.entities.target_user_name or "").lower() in ("everyone", "everybody", "team", "the team", "all")
+            or (question.target_user_name or "").lower() in ("everyone", "everybody", "team", "the team", "all")
+            or (
+                self._organizational_conversation_service is not None
+                and self._organizational_conversation_service.is_team_work_query(question.text or "")
+            )
+        )
+        if is_team_scope and self._organizational_conversation_service is not None:
+            team_ans = self._organizational_conversation_service.answer_question(question, context)
+            from dataclasses import replace
+            return replace(team_ans, text=self._sanitize_user_facing_response(team_ans.text))
+
         if self._person_work_service is None:
             logger.warning("PersonWorkService not configured on SimpleCognitiveEngine.")
             return Answer(
@@ -3858,7 +4138,6 @@ class SimpleCognitiveEngine(
                 is_conversational=True,
             )
 
-        step_params = plan.execution_steps[0].parameters if plan.execution_steps else {}
         target_user_id = (
             plan.entities.target_user_id
             or question.target_user_id
@@ -4016,3 +4295,85 @@ class SimpleCognitiveEngine(
             is_conversational=True,
             clear_pending=clear_pending,
         )
+
+    def _handle_multi_domain_intelligence_query(
+        self,
+        question: Question,
+        context: ConversationContext | None,
+        plan: CognitivePlan,
+    ) -> str:
+        """
+        Synthesize combined cross-domain intelligence:
+        - Conversation discussion context from OrganizationalConversationService / ConversationSummarizer
+        - Verified employee ownership and role from TeamDirectoryService
+        - Project management status and priority ranking from PriorityRankingService
+        - Highlight discrepancies between discussion and project status.
+        """
+        sections: list[str] = []
+
+        # 1. Conversation Evidence / Discussion
+        conv_text = ""
+        if self._organizational_conversation_service is not None:
+            try:
+                ans = self._organizational_conversation_service.answer_question(question, context)
+                if ans and ans.text:
+                    conv_text = ans.text
+            except Exception as e:
+                logger.warning("Multi-domain conversation retrieval error: %s", e)
+        elif self._conversation_summarizer_service is not None:
+            try:
+                ch = getattr(context, "channel_id", "") or "general"
+                req_u = getattr(context, "user_id", "") or "requester"
+                summ = self._conversation_summarizer_service.execute_private_summary_workflow(
+                    channel_id=ch,
+                    requesting_user_id=req_u,
+                    send_private_dm=False,
+                )
+                conv_text = summ.formatted_text
+            except Exception as e:
+                logger.warning("Multi-domain conversation summarizer error: %s", e)
+
+        if conv_text:
+            sections.append(f"### 💬 Recent Discussion & Updates\n{conv_text}")
+
+        # 2. Ownership & Directory Info
+        dir_text = ""
+        if self._team_directory_service is not None:
+            try:
+                dir_text = self._team_directory_service.answer_directory_query(question.text)
+            except Exception as e:
+                logger.warning("Multi-domain directory lookup error: %s", e)
+
+        if dir_text and "couldn't find" not in dir_text.lower():
+            sections.append(f"### 👤 Verified Ownership & Responsibilities\n{dir_text}")
+
+        # 3. Project Management Priority
+        prio_text = ""
+        if self._priority_ranking_service is not None:
+            try:
+                prio_text = self._priority_ranking_service.answer_priority_query(question.text)
+            except Exception as e:
+                logger.warning("Multi-domain priority tracker error: %s", e)
+
+        if prio_text:
+            sections.append(f"### 🎯 Project Priority & Milestone Status\n{prio_text}")
+
+        # 4. Check for Discrepancies
+        if conv_text and prio_text:
+            conv_lower = conv_text.lower()
+            prio_lower = prio_text.lower()
+            if "completed" in conv_lower and "in progress" in prio_lower:
+                sections.append(
+                    "⚠️ **Discrepancy Note:** Channel discussions reference this work as recently completed or merged, "
+                    "but project management trackers still show the item in progress."
+                )
+            elif "blocked" in prio_lower and "resolved" in conv_lower:
+                sections.append(
+                    "⚠️ **Discrepancy Note:** Channel messages suggest a resolution was reached, "
+                    "but the tracking item remains marked as blocked."
+                )
+
+        if not sections:
+            return "I couldn't retrieve enough correlated evidence across communications, team directory, and project priorities for this query."
+
+        return "\n\n".join(sections)

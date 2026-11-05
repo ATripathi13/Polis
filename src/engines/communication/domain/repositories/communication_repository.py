@@ -38,4 +38,15 @@ class CommunicationRepository(ABC):
         include_mentions: bool = True,
         include_parent_context: bool = True,
     ) -> list[CommunicationEvent]:
-        raise NotImplementedError
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_recent_events(
+        self,
+        *,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        limit: int = 500,
+        include_parent_context: bool = True,
+    ) -> list[CommunicationEvent]:
+        raise NotImplementedError

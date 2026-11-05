@@ -16,6 +16,10 @@ from .multi_step_coordinator import (
     StepExecutor,
 )
 
+from .organizational_conversation_service import (
+    OrganizationalConversationService,
+)
+
 __all__ = [
     "CognitiveEngine",
     "SimpleCognitiveEngine",
@@ -23,4 +27,5 @@ __all__ = [
     "MultiStepCoordinator",
     "StepExecutor",
     "PlanDependencyError",
+    "OrganizationalConversationService",
 ]

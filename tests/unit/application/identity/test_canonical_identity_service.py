@@ -202,3 +202,45 @@ def test_resolve_channel_types():
 
     teams_meet = service.resolve_channel("meeting-xyz", platform="microsoft_teams")
     assert teams_meet.channel_type == "meeting"
+
+
+def test_format_channel_and_user_name():
+    service = CanonicalIdentityService()
+    service.register_channel("C_TEST_CH", "dev-discussion")
+
+    # Registered channel formats with leading '#'
+    assert service.format_channel_name("C_TEST_CH") == "#dev-discussion"
+    assert service.format_channel_name("C0BG7NWMD6D") == "#agentic-army"
+
+    # Unregistered channel formats as unverified, never exposes raw ID
+    assert service.format_channel_name("C999999999") == "an unverified channel"
+
+    # Known user formats with human name
+    assert service.format_user_name("U0BBHB87SJF") == "Nav Thethi"
+    assert service.format_user_name("U0BB8T4BVEK") == "Akshat"
+
+    # Unknown user formats as unverified, never exposes raw ID
+    assert service.format_user_name("U999999999") == "an unverified team member"
+
+
+def test_sanitize_user_facing_text_replaces_all_raw_ids():
+    service = CanonicalIdentityService()
+    service.register_channel("C0BBMKRD4R4", "agentic-army")
+
+    raw_text = "Nav granted access to <@U0BU41F6CTD> in <#C0BBMKRD4R4|C0BBMKRD4R4>. <@U0BMLJD003G> is testing."
+    sanitized = service.sanitize_user_facing_text(raw_text)
+
+    assert "U0BU41F6CTD" not in sanitized
+    assert "C0BBMKRD4R4" not in sanitized
+    assert "U0BMLJD003G" not in sanitized
+    assert "@Hemant Kumar Sah" in sanitized
+    assert "#agentic-army" in sanitized
+    assert "@Vijay" in sanitized
+
+    # Unresolved raw IDs become unverified
+    unresolved_text = "Update from U999999999 in channel C999999999."
+    sanitized_unresolved = service.sanitize_user_facing_text(unresolved_text)
+    assert "U999999999" not in sanitized_unresolved
+    assert "C999999999" not in sanitized_unresolved
+    assert "an unverified team member" in sanitized_unresolved
+    assert "an unverified channel" in sanitized_unresolved

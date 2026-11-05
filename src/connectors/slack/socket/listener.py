@@ -199,6 +199,19 @@ class SlackSocketListener:
             # Existing Slack communication event.
             # ======================================================
 
+            verified_members = None
+            try:
+                verified_members = await asyncio.to_thread(
+                    self._identity_service.get_conversation_members,
+                    channel_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to verify Slack conversation membership for channel %s",
+                    channel_id,
+                    exc_info=True,
+                )
+
             slack_event = SlackEvent(
                 user=SlackUser(
                     user_id=user_id,
@@ -209,6 +222,7 @@ class SlackSocketListener:
                     channel_id=channel_id,
                     name=None,
                     is_private=False,
+                    members=verified_members,
                 ),
                 message=SlackMessage(
                     text=text,

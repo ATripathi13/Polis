@@ -4,6 +4,8 @@ In-memory repository for testing.
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 from datetime import datetime
 
 from engines.communication.domain.aggregates import (
@@ -215,6 +217,7 @@ class InMemoryCommunicationRepository(
                 continue
             seen_source_ids.add(event.source_event_id)
 
+            event_to_return = event
             # If reply and parent context requested
             if (
                 include_parent_context
@@ -223,31 +226,118 @@ class InMemoryCommunicationRepository(
             ):
                 parent_id = event.correlation_id.business_id
                 parent_ev = next((e for e in self._events if e.source_event_id == parent_id), None)
-                if parent_ev is not None:
+                # Verify parent belongs to the same channel
+                ev_ch_name = getattr(getattr(event, "channel", None), "name", None)
+                p_ch_name = getattr(getattr(parent_ev, "channel", None), "name", None) if parent_ev else None
+                if parent_ev is not None and ev_ch_name and p_ch_name and ev_ch_name == p_ch_name:
                     p_body = getattr(parent_ev.content, "body", "") or ""
                     p_author = getattr(parent_ev.actor, "display_name", "") or ""
                     p_channel = getattr(parent_ev.channel, "name", "") or ""
 
-                    event.content.metadata["parent_message_body"] = p_body
-                    event.content.metadata["parent_actor_name"] = p_author
-                    event.content.metadata["parent_channel_name"] = p_channel
-                    event.content.metadata["parent_ts"] = parent_id
+                    new_metadata = dict(event.content.metadata)
+                    new_metadata["parent_message_body"] = p_body
+                    new_metadata["parent_actor_name"] = p_author
+                    new_metadata["parent_channel_name"] = p_channel
+                    new_metadata["parent_ts"] = parent_id
 
-                    event.references.append(
-                        MessageReference(
-                            reference_id=parent_id,
-                            relationship_type="parent_message",
-                            source=event.source,
-                            metadata={
-                                "body": p_body,
-                                "author": p_author,
-                                "channel": p_channel,
-                            },
+                    new_content = dataclasses.replace(event.content, metadata=new_metadata)
+                    new_references = list(event.references)
+
+                    if not any(ref.reference_id == parent_id and ref.relationship_type == "parent_message" for ref in new_references):
+                        new_references.append(
+                            MessageReference(
+                                reference_id=parent_id,
+                                relationship_type="parent_message",
+                                source=event.source,
+                                metadata={
+                                    "body": p_body,
+                                    "author": p_author,
+                                    "channel": p_channel,
+                                },
+                            )
                         )
-                    )
 
-            results.append(event)
+                    event_to_return = dataclasses.replace(copy.copy(event), content=new_content, references=new_references)
+
+            results.append(event_to_return)
             if len(results) >= limit:
                 break
 
-        return results
+        return results
+
+    def get_recent_events(
+        self,
+        *,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        limit: int = 500,
+        include_parent_context: bool = True,
+    ) -> list[CommunicationEvent]:
+        from engines.communication.domain.value_objects import MessageReference
+
+        records = sorted(
+            self._events,
+            key=lambda ev: ev.created_at,
+            reverse=True,
+        )
+
+        results: list[CommunicationEvent] = []
+        seen_source_ids: set[str] = set()
+
+        for event in records:
+            if start_time is not None and event.created_at < start_time:
+                continue
+            if end_time is not None and event.created_at >= end_time:
+                continue
+
+            if event.source_event_id in seen_source_ids:
+                continue
+            seen_source_ids.add(event.source_event_id)
+
+            event_to_return = event
+            # If reply and parent context requested
+            if (
+                include_parent_context
+                and event.correlation_id.business_id
+                and event.correlation_id.business_id != event.source_event_id
+            ):
+                parent_id = event.correlation_id.business_id
+                parent_ev = next((e for e in self._events if e.source_event_id == parent_id), None)
+                # Verify parent belongs to the same channel
+                ev_ch_name = getattr(getattr(event, "channel", None), "name", None)
+                p_ch_name = getattr(getattr(parent_ev, "channel", None), "name", None) if parent_ev else None
+                if parent_ev is not None and ev_ch_name and p_ch_name and ev_ch_name == p_ch_name:
+                    p_body = getattr(parent_ev.content, "body", "") or ""
+                    p_author = getattr(parent_ev.actor, "display_name", "") or ""
+                    p_channel = getattr(parent_ev.channel, "name", "") or ""
+
+                    new_metadata = dict(event.content.metadata)
+                    new_metadata["parent_message_body"] = p_body
+                    new_metadata["parent_actor_name"] = p_author
+                    new_metadata["parent_channel_name"] = p_channel
+                    new_metadata["parent_ts"] = parent_id
+
+                    new_content = dataclasses.replace(event.content, metadata=new_metadata)
+                    new_references = list(event.references)
+
+                    if not any(ref.reference_id == parent_id and ref.relationship_type == "parent_message" for ref in new_references):
+                        new_references.append(
+                            MessageReference(
+                                reference_id=parent_id,
+                                relationship_type="parent_message",
+                                source=event.source,
+                                metadata={
+                                    "body": p_body,
+                                    "author": p_author,
+                                    "channel": p_channel,
+                                },
+                            )
+                        )
+
+                    event_to_return = dataclasses.replace(copy.copy(event), content=new_content, references=new_references)
+
+            results.append(event_to_return)
+            if len(results) >= limit:
+                break
+
+        return results

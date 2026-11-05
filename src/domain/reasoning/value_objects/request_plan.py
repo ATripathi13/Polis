@@ -26,6 +26,9 @@ class IntentCategory(str, Enum):
     REMINDER_ACTION = "reminder_action"
     GOVERNANCE_ACTION = "governance_action"
     EMPLOYEE_WORK_QUERY = "employee_work_query"
+    HR_DIRECTORY_QUERY = "hr_directory_query"
+    PRIORITY_TRACKING_QUERY = "priority_tracking_query"
+    CONVERSATION_SUMMARY = "conversation_summary"
     ACTIVITY_STATUS_QUERY = "activity_status_query"
     MULTI_AGENT_QUERY = "multi_agent_query"
     GENERAL_CONVERSATION = "general_conversation"
@@ -44,6 +47,9 @@ class TargetAgent(str, Enum):
     GOVERNANCE_AGENT = "governance_agent"
     ACTIVITY_SERVICE = "activity_service"
     REMINDER_SERVICE = "reminder_service"
+    TEAM_DIRECTORY = "team_directory"
+    PRIORITY_TRACKER = "priority_tracker"
+    CONVERSATION_SUMMARIZER = "conversation_summarizer"
     GENERAL_REASONER = "general_reasoner"
 
 

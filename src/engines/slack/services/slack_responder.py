@@ -33,3 +33,17 @@ class SlackResponder:
             text=text,
             thread_ts=thread_ts,
         )
+
+    def send_dm(
+        self,
+        user_id: str,
+        text: str,
+    ) -> str:
+        """
+        Send a direct message privately to a Slack user.
+        Returns the DM channel ID.
+        """
+        return self._client.send_dm(
+            user_id=user_id,
+            text=text,
+        )

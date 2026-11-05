@@ -98,6 +98,25 @@ def get_meeting_intelligence_service():
 
     return container.meeting_intelligence_service
 
+
+def get_conversation_summarizer_service():
+    """Return the Conversation Summarizer Service."""
+    container = get_container()
+    return getattr(container, "conversation_summarizer_service", None) or getattr(container.engine, "conversation_summarizer_service", None)
+
+
+def get_team_directory_service():
+    """Return the Team Directory Service."""
+    container = get_container()
+    return getattr(container, "team_directory_service", None) or getattr(container.engine, "team_directory_service", None)
+
+
+def get_priority_ranking_service():
+    """Return the Priority Ranking Service."""
+    container = get_container()
+    return getattr(container, "priority_ranking_service", None) or getattr(container.engine, "priority_ranking_service", None)
+
+
 def require_internal_api_key(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> None:

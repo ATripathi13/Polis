@@ -194,6 +194,69 @@ class Settings(BaseSettings):
         alias="CALENDAR_MAX_RETRY_ATTEMPTS",
     )
 
+    # ==========================================================
+    # HR & Directory Integrations (Optional)
+    # ==========================================================
+
+    bamboohr_api_key: str = Field(
+        default="",
+        alias="BAMBOOHR_API_KEY",
+    )
+
+    bamboohr_subdomain: str = Field(
+        default="",
+        alias="BAMBOOHR_SUBDOMAIN",
+    )
+
+    workday_api_endpoint: str = Field(
+        default="",
+        alias="WORKDAY_API_ENDPOINT",
+    )
+
+    workday_client_id: str = Field(
+        default="",
+        alias="WORKDAY_CLIENT_ID",
+    )
+
+    workday_client_secret: str = Field(
+        default="",
+        alias="WORKDAY_CLIENT_SECRET",
+    )
+
+    # ==========================================================
+    # Project Management Integrations (Optional)
+    # ==========================================================
+
+    jira_url: str = Field(
+        default="",
+        alias="JIRA_URL",
+    )
+
+    jira_email: str = Field(
+        default="",
+        alias="JIRA_EMAIL",
+    )
+
+    jira_api_token: str = Field(
+        default="",
+        alias="JIRA_API_TOKEN",
+    )
+
+    linear_api_key: str = Field(
+        default="",
+        alias="LINEAR_API_KEY",
+    )
+
+    github_token: str = Field(
+        default="",
+        alias="GITHUB_TOKEN",
+    )
+
+    github_org: str = Field(
+        default="",
+        alias="GITHUB_ORG",
+    )
+
     @field_validator("calendar_reminder_offset_hours")
     @classmethod
     def validate_calendar_reminder_offset(cls, v: int) -> int:
