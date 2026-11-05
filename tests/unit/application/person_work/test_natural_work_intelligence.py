@@ -31,7 +31,9 @@ import pytest
 
 from application.cognitive import CognitivePlanner, SimpleCognitiveEngine
 from application.person_work.person_work_service import (
+    ExtractedWorkItem,
     PersonWorkService,
+    PersonWorkSummary,
     WorkActivityType,
 )
 from domain.common.identifier import Identifier
@@ -637,3 +639,686 @@ class TestNaturalWorkIntelligence:
         assert len(result) == 2
         assert any("canva" in item.work_item.lower() for item in result)
         assert any("ivan" in item.work_item.lower() for item in result)
+    # -------------------------------------------------------------------------
+    # Regression Tests: Question-Specific Evidence Selection & Prompt Policy
+    # -------------------------------------------------------------------------
+
+    def test_regression_1_current_work_receives_active_and_commitments_without_status_confusion(self, comm_repo, mock_identity):
+        """
+        1. A current-work question receives active work and relevant planned commitments, without confusing their status.
+        """
+        captured_prompt = []
+        class MockLLM:
+            def generate(self, prompt: str) -> str:
+                captured_prompt.append(prompt)
+                return "Gurkirat is preparing the podcast and plans to publish reels."
+
+        service = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=MockLLM(),
+        )
+
+        now = datetime.now(timezone.utc)
+        comm_repo.save(_build_comm("g1", "I am preparing new podcast files for the CMO Blindspots episode.", "U_GURKIRAT", "Gurkirat", created_at=now - timedelta(hours=3)))
+        comm_repo.save(_build_comm("g2", "Someone mentioned extracting clips for Webinar 04, cc Gurkirat.", "U_COLLEAGUE", "Colleague", mentions=["U_GURKIRAT"], created_at=now - timedelta(hours=2)))
+        comm_repo.save(_build_comm("g3", "I will publish Kriss Miller reels once finalization is complete.", "U_GURKIRAT", "Gurkirat", created_at=now - timedelta(hours=1)))
+        comm_repo.save(_build_comm("g4", "The audio editing for Episode 1 is complete.", "U_GURKIRAT", "Gurkirat", created_at=now - timedelta(hours=4)))
+
+        summary = service.get_person_work_summary(
+            target_user_id="U_GURKIRAT",
+            target_user_name="Gurkirat",
+            query_text="What is Gurkirat working on?",
+        )
+
+        assert len(captured_prompt) == 1
+        prompt = captured_prompt[0]
+        assert "Query focus: current_work" in prompt
+        assert "Active Work & Workstreams (Confirmed Ongoing)" in prompt
+        assert "CMO Blindspots" in prompt or "podcast" in prompt.lower()
+        assert "Upcoming Commitments / Planned Next Steps (Pending/conditional, not completed)" in prompt
+        assert "reels" in prompt.lower()
+        # Completed work not passed as current work
+        assert "Recently Completed Work" not in prompt
+        # Passing mention not passed as confirmed work
+        assert "Webinar 04" not in prompt
+
+    def test_regression_2_responsibility_question_receives_responsibilities_and_assignments_without_discussions_as_ownership(self, comm_repo, mock_identity):
+        """
+        2. A responsibility question receives active workstreams and explicit assignments, without treating discussions as ownership
+           and without conflating active work with formal responsibilities.
+        """
+        captured_prompt = []
+        class MockLLM:
+            def generate(self, prompt: str) -> str:
+                captured_prompt.append(prompt)
+                return "Vijay is working on database indexing and assigned security audit."
+
+        service = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=MockLLM(),
+        )
+
+        now = datetime.now(timezone.utc)
+        comm_repo.save(_build_comm("v1", "I am working on the database indexing.", "U_VIJAY", "Vijay", created_at=now - timedelta(hours=3)))
+        comm_repo.save(_build_comm("v2", "Vijay, please review the security audit policy.", "U_COLLEAGUE", "Colleague", mentions=["U_VIJAY"], created_at=now - timedelta(hours=2)))
+        comm_repo.save(_build_comm("v3", "I will configure staging alerts tomorrow.", "U_VIJAY", "Vijay", created_at=now - timedelta(hours=1)))
+        comm_repo.save(_build_comm("v4", "Mentioned Vijay in passing during the Circle and GJ sync.", "U_COLLEAGUE", "Colleague", mentions=["U_VIJAY"], created_at=now - timedelta(hours=4)))
+
+        summary = service.get_person_work_summary(
+            target_user_id="U_VIJAY",
+            target_user_name="Vijay",
+            query_text="What are Vijay's responsibilities?",
+        )
+
+        # 1. LLM Prompt Evidence & Instructions verification
+        assert len(captured_prompt) == 1
+        prompt = captured_prompt[0]
+        assert "Query focus: assigned" in prompt
+        assert "Active Work & Workstreams (Confirmed Ongoing — direct activity, not formal delegation)" in prompt
+        assert "database indexing" in prompt
+        assert "Assigned Work (Delegated tasks, not yet confirmed started)" in prompt
+        assert "security audit" in prompt
+        assert "Upcoming Commitments" in prompt
+        assert "staging alerts" in prompt
+        # Active work is not labeled as Active Responsibility
+        assert "Active Responsibility" not in prompt
+        assert "Active Responsibilities" not in prompt
+        # Prompt instructs LLM not to assume formal responsibility from active work
+        assert "An active workstream does not automatically establish formal responsibility" in prompt
+        assert "Avoid claiming formal responsibility unless the evidence explicitly establishes ownership or delegation" in prompt
+        # Passing mentions must not be included as ownership in structured evidence
+        evidence_part = prompt.split("Structured Work Evidence:")[1].split("Core Instructions:")[0]
+        assert "Circle" not in evidence_part
+        assert "GJ" not in evidence_part
+
+        # 2. Deterministic Fallback verification
+        service_fb = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=None,
+        )
+        summary_fb = service_fb.get_person_work_summary(
+            target_user_id="U_VIJAY",
+            target_user_name="Vijay",
+            query_text="What are Vijay's responsibilities?",
+        )
+        fb_resp = summary_fb.formatted_response
+        assert "**Active Workstreams**" in fb_resp
+        assert "**Active Responsibilities**" not in fb_resp
+        assert "**Assigned Work**" in fb_resp
+        assert "security audit" in fb_resp
+        assert "**Planned Commitments**" in fb_resp
+        assert "staging alerts" in fb_resp
+        assert "database indexing" in fb_resp
+
+    def test_regression_3_progress_question_receives_progress_related_evidence(self, comm_repo, mock_identity):
+        """
+        3. A progress question receives progress-related evidence (updates history and blockers).
+        """
+        captured_prompt = []
+        class MockLLM:
+            def generate(self, prompt: str) -> str:
+                captured_prompt.append(prompt)
+                return "Hemant has updated knowledge base and tested formatting, with blocker on API keys."
+
+        service = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=MockLLM(),
+        )
+
+        now = datetime.now(timezone.utc)
+        comm_repo.save(_build_comm("h1", "I am improving PolisBot capabilities.", "U_HEMANT", "Hemant", created_at=now - timedelta(hours=5)))
+        comm_repo.save(_build_comm("h2", "I updated the Knowledge Base.", "U_HEMANT", "Hemant", created_at=now - timedelta(hours=4)))
+        comm_repo.save(_build_comm("h3", "Testing recent changes and fixing response formatting.", "U_HEMANT", "Hemant", created_at=now - timedelta(hours=3)))
+        comm_repo.save(_build_comm("h4", "The deployment is blocked on API credentials.", "U_HEMANT", "Hemant", created_at=now - timedelta(hours=2)))
+        comm_repo.save(_build_comm("h5", "Hemant, please write the release notes.", "U_COLLEAGUE", "Colleague", mentions=["U_HEMANT"], created_at=now - timedelta(hours=1)))
+
+        summary = service.get_person_work_summary(
+            target_user_id="U_HEMANT",
+            target_user_name="Hemant",
+            query_text="What progress has Hemant made?",
+        )
+
+        assert len(captured_prompt) == 1
+        prompt = captured_prompt[0]
+        assert "Query focus: progress" in prompt
+        assert "Active Work & Workstreams (Confirmed Ongoing)" in prompt
+        assert "Recent progress updates" in prompt
+        assert "Blockers & Dependencies (Impacting progress)" in prompt
+        assert "API credentials" in prompt
+        # Unstarted delegated tasks excluded from progress
+        assert "release notes" not in prompt
+
+    def test_regression_4_completed_work_question_does_not_receive_unrelated_active_work_as_completed_evidence(self, comm_repo, mock_identity):
+        """
+        4. A completed-work question with both completed and active work:
+           - Prompt / LLM evidence must mention completed work and must not mention active work.
+           - Deterministic fallback must mention completed work and must not mention active work.
+        """
+        captured_prompt = []
+        class MockLLM:
+            def generate(self, prompt: str) -> str:
+                captured_prompt.append(prompt)
+                return "Hemant completed the API integration."
+
+        service = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=MockLLM(),
+        )
+
+        now = datetime.now(timezone.utc)
+        comm_repo.save(_build_comm("h1", "I am building the Canva graphics generation module.", "U_HEMANT", "Hemant", created_at=now - timedelta(hours=3)))
+        comm_repo.save(_build_comm("h2", "The API integration is complete.", "U_HEMANT", "Hemant", created_at=now - timedelta(hours=1)))
+
+        summary = service.get_person_work_summary(
+            target_user_id="U_HEMANT",
+            target_user_name="Hemant",
+            query_text="What has Hemant completed this week?",
+        )
+
+        # 1. LLM Evidence verification
+        assert len(captured_prompt) == 1
+        prompt = captured_prompt[0]
+        assert "Query focus: completed" in prompt
+        assert "Recently Completed Work (Verified finished)" in prompt
+        assert "API integration" in prompt
+        assert "Canva graphics" not in prompt
+
+        # 2. Deterministic Fallback verification
+        service_fb = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=None,
+        )
+        summary_fb = service_fb.get_person_work_summary(
+            target_user_id="U_HEMANT",
+            target_user_name="Hemant",
+            query_text="What has Hemant completed this week?",
+        )
+        fb_resp = summary_fb.formatted_response
+        assert "**Recently Completed**" in fb_resp
+        assert "API integration" in fb_resp
+        assert "Canva graphics" not in fb_resp
+        assert "ongoing" not in fb_resp.lower()
+        assert "appears to be ongoing" not in fb_resp.lower()
+
+    def test_regression_4b_completed_work_when_none_completed_excludes_active_work(self, comm_repo, mock_identity):
+        """
+        4b. A completed-work question with active work but NO completed work:
+           - Prompt / LLM evidence must clearly state no completed tasks were found and must not mention active work.
+           - Deterministic fallback must clearly state no confirmed completed tasks were found and must not mention active work.
+        """
+        captured_prompt = []
+        class MockLLM:
+            def generate(self, prompt: str) -> str:
+                captured_prompt.append(prompt)
+                return "I checked recent records for Hemant, but found no confirmed completed tasks in the past 7 days."
+
+        service = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=MockLLM(),
+        )
+
+        now = datetime.now(timezone.utc)
+        comm_repo.save(_build_comm("h1", "I am building the Canva graphics generation module.", "U_HEMANT", "Hemant", created_at=now - timedelta(hours=3)))
+
+        summary = service.get_person_work_summary(
+            target_user_id="U_HEMANT",
+            target_user_name="Hemant",
+            query_text="What has Hemant completed this week?",
+        )
+
+        # 1. LLM Evidence verification
+        assert len(captured_prompt) == 1
+        prompt = captured_prompt[0]
+        assert "Query focus: completed" in prompt
+        assert "Recently Completed Work (Verified finished)" in prompt
+        assert "None recorded in the past" in prompt
+        assert "Canva graphics" not in prompt
+        assert "Ongoing Workstreams" not in prompt
+
+        # 2. Deterministic Fallback verification
+        service_fb = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=None,
+        )
+        summary_fb = service_fb.get_person_work_summary(
+            target_user_id="U_HEMANT",
+            target_user_name="Hemant",
+            query_text="What has Hemant completed this week?",
+        )
+        fb_resp = summary_fb.formatted_response
+        assert "no confirmed completed tasks in the past" in fb_resp.lower()
+        assert "Canva graphics" not in fb_resp
+        assert "ongoing" not in fb_resp.lower()
+        assert "appears to be ongoing" not in fb_resp.lower()
+
+    def test_regression_5_blocker_question_focuses_on_blockers_and_dependencies(self, comm_repo, mock_identity):
+        """
+        5. A blocker question focuses on blockers and dependencies and does not attribute impact to unrelated active work.
+        """
+        captured_prompt = []
+        class MockLLM:
+            def generate(self, prompt: str) -> str:
+                captured_prompt.append(prompt)
+                return "Vijay is blocked on API credentials."
+
+        service = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=MockLLM(),
+        )
+
+        now = datetime.now(timezone.utc)
+        comm_repo.save(_build_comm("v1", "The deployment is blocked because the API credentials are not available.", "U_VIJAY", "Vijay", created_at=now - timedelta(hours=3)))
+        comm_repo.save(_build_comm("v2", "I am implementing the Calendar Agent.", "U_VIJAY", "Vijay", created_at=now - timedelta(hours=2)))
+        comm_repo.save(_build_comm("v3", "The Slack ingestion changes are complete.", "U_VIJAY", "Vijay", created_at=now - timedelta(hours=4)))
+
+        summary = service.get_person_work_summary(
+            target_user_id="U_VIJAY",
+            target_user_name="Vijay",
+            query_text="What is Vijay blocked on?",
+        )
+
+        # 1. LLM Evidence verification: verified blocker present, unrelated active work excluded
+        assert len(captured_prompt) == 1
+        prompt = captured_prompt[0]
+        assert "Query focus: blockers" in prompt
+        assert "Blockers & Dependencies" in prompt
+        assert "API credentials" in prompt
+        # Unrelated active work (Calendar Agent) must NOT be labeled as affected
+        assert "Calendar Agent" not in prompt
+        assert "Potentially Affected Active Workstreams" not in prompt
+        assert "Affected Workstreams" not in prompt
+        # Completed work excluded
+        assert "Slack ingestion" not in prompt
+
+        # 2. Deterministic Fallback verification
+        service_fb = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=None,
+        )
+        summary_fb = service_fb.get_person_work_summary(
+            target_user_id="U_VIJAY",
+            target_user_name="Vijay",
+            query_text="What is Vijay blocked on?",
+        )
+        fb_resp = summary_fb.formatted_response
+        assert "**Blockers and Dependencies**" in fb_resp
+        assert "API credentials" in fb_resp
+        assert "Calendar Agent" not in fb_resp
+        assert "Slack ingestion" not in fb_resp
+
+    def test_regression_5b_blocker_question_includes_explicitly_related_workstreams(self, comm_repo, mock_identity):
+        """
+        5b. A blocker explicitly naming 'POLIS production deployment' links to that workstream,
+            while excluding unrelated active work.
+        """
+        captured_prompt = []
+        class MockLLM:
+            def generate(self, prompt: str) -> str:
+                captured_prompt.append(prompt)
+                return "The POLIS production deployment is blocked on API credentials."
+
+        service = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=MockLLM(),
+        )
+
+        now = datetime.now(timezone.utc)
+        comm_repo.save(_build_comm("v1", "The POLIS production deployment is blocked because the API credentials are not available.", "U_VIJAY", "Vijay", created_at=now - timedelta(hours=3)))
+        comm_repo.save(_build_comm("v2", "I am implementing the POLIS production deployment.", "U_VIJAY", "Vijay", created_at=now - timedelta(hours=2)))
+        comm_repo.save(_build_comm("v3", "I am maintaining the legacy analytics pipeline.", "U_VIJAY", "Vijay", created_at=now - timedelta(hours=1)))
+
+        summary = service.get_person_work_summary(
+            target_user_id="U_VIJAY",
+            target_user_name="Vijay",
+            query_text="What is Vijay blocked on?",
+        )
+
+        # 1. LLM Evidence verification
+        assert len(captured_prompt) == 1
+        prompt = captured_prompt[0]
+        assert "Query focus: blockers" in prompt
+        assert "Blockers & Dependencies" in prompt
+        assert "API credentials" in prompt
+        # Explicitly linked workstream is included
+        assert "Affected Workstreams (Explicitly linked by recorded evidence)" in prompt
+        assert "POLIS production deployment" in prompt
+        # Unrelated active work is excluded
+        assert "legacy analytics pipeline" not in prompt
+
+        # 2. Deterministic Fallback verification
+        service_fb = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=None,
+        )
+        summary_fb = service_fb.get_person_work_summary(
+            target_user_id="U_VIJAY",
+            target_user_name="Vijay",
+            query_text="What is Vijay blocked on?",
+        )
+        fb_resp = summary_fb.formatted_response
+        assert "**Blockers and Dependencies**" in fb_resp
+        assert "API credentials" in fb_resp
+        assert "**Affected Workstreams**" in fb_resp
+        assert "POLIS production deployment" in fb_resp
+        assert "legacy analytics pipeline" not in fb_resp
+
+    def test_regression_5c_api_credentials_blocker_does_not_link_to_unrelated_api_integration(self, comm_repo, mock_identity):
+        """
+        5c. 'API credentials are unavailable' does not automatically link to an unrelated 'API integration' workstream.
+            Blocker information itself is still returned correctly.
+        """
+        captured_prompt = []
+        class MockLLM:
+            def generate(self, prompt: str) -> str:
+                captured_prompt.append(prompt)
+                return "Vijay is blocked because API credentials are unavailable."
+
+        service = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=MockLLM(),
+        )
+
+        now = datetime.now(timezone.utc)
+        comm_repo.save(_build_comm("v1", "The deployment is blocked because the API credentials are unavailable.", "U_VIJAY", "Vijay", created_at=now - timedelta(hours=3)))
+        comm_repo.save(_build_comm("v2", "I am working on the API integration.", "U_VIJAY", "Vijay", created_at=now - timedelta(hours=2)))
+
+        summary = service.get_person_work_summary(
+            target_user_id="U_VIJAY",
+            target_user_name="Vijay",
+            query_text="What is Vijay blocked on?",
+        )
+
+        # 1. LLM Evidence verification
+        assert len(captured_prompt) == 1
+        prompt = captured_prompt[0]
+        assert "Query focus: blockers" in prompt
+        assert "Blockers & Dependencies" in prompt
+        assert "API credentials" in prompt
+        # Unrelated 'API integration' must NOT be linked as an affected workstream
+        assert "Affected Workstreams" not in prompt
+        assert "API integration" not in prompt
+
+        # 2. Deterministic Fallback verification
+        service_fb = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=None,
+        )
+        summary_fb = service_fb.get_person_work_summary(
+            target_user_id="U_VIJAY",
+            target_user_name="Vijay",
+            query_text="What is Vijay blocked on?",
+        )
+        fb_resp = summary_fb.formatted_response
+        assert "**Blockers and Dependencies**" in fb_resp
+        assert "API credentials" in fb_resp
+        assert "**Affected Workstreams**" not in fb_resp
+        assert "API integration" not in fb_resp
+
+    def test_regression_5d_two_workstreams_same_project_not_automatically_linked(self, comm_repo, mock_identity):
+        """
+        5d. Two workstreams in the same project are not automatically linked to one blocker.
+            Only the workstream explicitly identified by the blocker is linked; shared project
+            name is not sufficient.
+        """
+        service = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=None,
+        )
+
+        now = datetime.now(timezone.utc)
+        b = ExtractedWorkItem(
+            work_item="cluster certificates expired",
+            activity_type=WorkActivityType.BLOCKER,
+            status="blocked",
+            latest_update="The POLIS production deployment is blocked because cluster certificates expired.",
+            timestamp=now - timedelta(hours=3),
+            source_channel="engineering",
+            source_ts="b1",
+            person_id="U_VIJAY",
+            person_name="Vijay",
+            evidence="The POLIS production deployment is blocked because cluster certificates expired.",
+            project="POLIS",
+        )
+        ws_deployment = ExtractedWorkItem(
+            work_item="POLIS production deployment",
+            activity_type=WorkActivityType.ACTIVE_WORK,
+            status="in_progress",
+            latest_update="I am implementing the POLIS production deployment.",
+            timestamp=now - timedelta(hours=2),
+            source_channel="engineering",
+            source_ts="ws1",
+            person_id="U_VIJAY",
+            person_name="Vijay",
+            evidence="I am implementing the POLIS production deployment.",
+            project="POLIS",
+        )
+        ws_polisbot = ExtractedWorkItem(
+            work_item="PolisBot capabilities",
+            activity_type=WorkActivityType.ACTIVE_WORK,
+            status="in_progress",
+            latest_update="I am improving PolisBot capabilities.",
+            timestamp=now - timedelta(hours=1),
+            source_channel="engineering",
+            source_ts="ws2",
+            person_id="U_VIJAY",
+            person_name="Vijay",
+            evidence="I am improving PolisBot capabilities.",
+            project="POLIS",
+        )
+
+        # 1. Direct helper verification:
+        # Both workstreams share project='POLIS', but only ws_deployment is explicitly named in blocker text.
+        assert PersonWorkService._is_blocker_related_to_workstream(b, ws_deployment) is True
+        assert PersonWorkService._is_blocker_related_to_workstream(b, ws_polisbot) is False
+
+        # 2. LLM Evidence builder verification:
+        summary = PersonWorkSummary(
+            person_id="U_VIJAY",
+            person_name="Vijay",
+            blockers=[b],
+            active_work=[ws_deployment, ws_polisbot],
+            time_window_days=7,
+        )
+        evidence = service._build_evidence_for_focus(summary, "blockers")
+        assert "Blockers & Dependencies" in evidence
+        assert "cluster certificates expired" in evidence
+        assert "Affected Workstreams (Explicitly linked by recorded evidence)" in evidence
+        assert "POLIS production deployment" in evidence
+        assert "PolisBot capabilities" not in evidence
+
+        # 3. Deterministic Fallback verification:
+        resp = service._synthesize_deterministic_fallback(summary, "blockers", is_self=False)
+        assert "**Blockers and Dependencies**" in resp
+        assert "cluster certificates expired" in resp
+        assert "**Affected Workstreams**" in resp
+        assert "POLIS production deployment" in resp
+        assert "PolisBot capabilities" not in resp
+
+    def test_regression_6_availability_question_does_not_receive_unrelated_technical_work(self, comm_repo, mock_identity):
+        """
+        6. An availability question does not receive unrelated technical work as its answer evidence.
+        """
+        captured_prompt = []
+        class MockLLM:
+            def generate(self, prompt: str) -> str:
+                captured_prompt.append(prompt)
+                return "Hemant recently signed off and took a break for the day."
+
+        service = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=MockLLM(),
+        )
+
+        now = datetime.now(timezone.utc)
+        comm_repo.save(_build_comm("h1", "I am improving PolisBot capabilities.", "U_HEMANT", "Hemant", created_at=now - timedelta(hours=4)))
+        comm_repo.save(_build_comm("h2", "The API integration is complete.", "U_HEMANT", "Hemant", created_at=now - timedelta(hours=3)))
+        comm_repo.save(_build_comm("h3", "Signing off and taking a break for the day.", "U_HEMANT", "Hemant", created_at=now - timedelta(hours=1)))
+
+        summary = service.get_person_work_summary(
+            target_user_id="U_HEMANT",
+            target_user_name="Hemant",
+            query_text="Is Hemant available? When did he sign off?",
+        )
+
+        assert len(captured_prompt) == 1
+        prompt = captured_prompt[0]
+        assert "Query focus: availability" in prompt
+        assert "Scheduling & Availability Evidence" in prompt
+        assert "Signing off and taking a break" in prompt
+        # Zero unrelated technical work in availability evidence
+        assert "PolisBot" not in prompt
+        assert "API integration" not in prompt
+
+    def test_regression_7_missing_official_working_hours_not_fabricated(self, comm_repo, mock_identity):
+        """
+        7. Missing official working hours are not fabricated.
+        """
+        captured_prompt = []
+        class MockLLM:
+            def generate(self, prompt: str) -> str:
+                captured_prompt.append(prompt)
+                return "There are no official working hours recorded for Akshat."
+
+        service = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=MockLLM(),
+        )
+
+        now = datetime.now(timezone.utc)
+        comm_repo.save(_build_comm("a1", "I am implementing the Organizational Event Engine.", "U_AKSHAT", "Akshat", created_at=now - timedelta(hours=2)))
+
+        summary = service.get_person_work_summary(
+            target_user_id="U_AKSHAT",
+            target_user_name="Akshat",
+            query_text="What are Akshat's working hours?",
+        )
+
+        assert len(captured_prompt) == 1
+        prompt = captured_prompt[0]
+        assert "Query focus: availability" in prompt
+        assert "Official recurring working hours: NOT recorded" in prompt
+        assert "never fabricate working hours" in prompt.lower() or "not infer regular working hours" in prompt.lower()
+        # Technical work excluded
+        assert "Organizational Event Engine" not in prompt
+
+    def test_regression_8_general_summary_continues_receiving_all_relevant_categories(self, comm_repo, mock_identity):
+        """
+        8. A general summary continues receiving all relevant work categories.
+        """
+        captured_prompt = []
+        class MockLLM:
+            def generate(self, prompt: str) -> str:
+                captured_prompt.append(prompt)
+                return "Summary covering all categories."
+
+        service = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=MockLLM(),
+        )
+
+        now = datetime.now(timezone.utc)
+        comm_repo.save(_build_comm("a1", "I am implementing the Organizational Event Engine.", "U_AKSHAT", "Akshat", created_at=now - timedelta(hours=6)))
+        comm_repo.save(_build_comm("a2", "Akshat, please review the API specs.", "U_COLLEAGUE", "Colleague", mentions=["U_AKSHAT"], created_at=now - timedelta(hours=5)))
+        comm_repo.save(_build_comm("a3", "I will write the test suite tomorrow.", "U_AKSHAT", "Akshat", created_at=now - timedelta(hours=4)))
+        comm_repo.save(_build_comm("a4", "The Slack ingestion changes are complete.", "U_AKSHAT", "Akshat", created_at=now - timedelta(hours=3)))
+        comm_repo.save(_build_comm("a5", "The database migration is blocked on credentials.", "U_AKSHAT", "Akshat", created_at=now - timedelta(hours=2)))
+        comm_repo.save(_build_comm("a6", "Mentioned Akshat in relation to deployment roadmap.", "U_COLLEAGUE", "Colleague", mentions=["U_AKSHAT"], created_at=now - timedelta(hours=1)))
+
+        summary = service.get_person_work_summary(
+            target_user_id="U_AKSHAT",
+            target_user_name="Akshat",
+            query_text="Can you provide an overview and summary of priorities for Akshat?",
+        )
+
+        assert len(captured_prompt) == 1
+        prompt = captured_prompt[0]
+        assert "Query focus: summary_and_priorities" in prompt
+        assert "Active Work & Workstreams" in prompt
+        assert "Assigned Work" in prompt
+        assert "Upcoming Commitments" in prompt
+        assert "Recently Completed Work" in prompt
+        assert "Blockers & Dependencies" in prompt
+        assert "Discussions & Mentions" in prompt
+
+    def test_regression_9_llm_and_deterministic_fallback_consistent_classification_and_ownership(self, comm_repo, mock_identity):
+        """
+        9. The LLM and deterministic fallback follow consistent classification and ownership rules.
+        """
+        captured_prompt = []
+        class MockLLM:
+            def generate(self, prompt: str) -> str:
+                captured_prompt.append(prompt)
+                return "LLM answer"
+
+        service_with_llm = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+            llm_client=MockLLM(),
+        )
+        service_fallback = PersonWorkService(
+            communication_repository=comm_repo,
+            identity_service=mock_identity,
+        )
+
+        now = datetime.now(timezone.utc)
+        comm_repo.save(_build_comm("h1", "I am working on the database indexing.", "U_HEMANT", "Hemant", created_at=now - timedelta(hours=3)))
+        comm_repo.save(_build_comm("h2", "The API integration is complete.", "U_HEMANT", "Hemant", created_at=now - timedelta(hours=2)))
+        comm_repo.save(_build_comm("h3", "The deployment is blocked on token keys.", "U_HEMANT", "Hemant", created_at=now - timedelta(hours=1)))
+
+        # Test Blocker query in both paths
+        sum_llm_blk = service_with_llm.get_person_work_summary(target_user_id="U_HEMANT", target_user_name="Hemant", query_text="What is Hemant blocked on?")
+        sum_fb_blk = service_fallback.get_person_work_summary(target_user_id="U_HEMANT", target_user_name="Hemant", query_text="What is Hemant blocked on?")
+        assert sum_llm_blk.query_focus == sum_fb_blk.query_focus == "blockers"
+        assert "token keys" in captured_prompt[-1]
+        assert "**Blockers and Dependencies**" in sum_fb_blk.formatted_response
+        assert "token keys" in sum_fb_blk.formatted_response
+
+        # Test Completed query in both paths
+        sum_llm_cmp = service_with_llm.get_person_work_summary(target_user_id="U_HEMANT", target_user_name="Hemant", query_text="What has Hemant completed?")
+        sum_fb_cmp = service_fallback.get_person_work_summary(target_user_id="U_HEMANT", target_user_name="Hemant", query_text="What has Hemant completed?")
+        assert sum_llm_cmp.query_focus == sum_fb_cmp.query_focus == "completed"
+        assert "API integration" in captured_prompt[-1]
+        assert "**Recently Completed**" in sum_fb_cmp.formatted_response
+        assert "API integration" in sum_fb_cmp.formatted_response
+
+    def test_regression_10_public_channel_and_dm_response_behaviour_consistency(self, engine, comm_repo):
+        """
+        10. Public-channel and DM response behaviour remains consistent for question-specific queries.
+        """
+        now = datetime.now(timezone.utc)
+        comm_repo.save(_build_comm("p1", "The API integration is complete.", "U_HEMANT", "Hemant", channel_id="C_PUB", channel_type="public", created_at=now - timedelta(hours=2)))
+        comm_repo.save(_build_comm("p2", "I am improving PolisBot capabilities.", "U_HEMANT", "Hemant", channel_id="C_PUB", channel_type="public", created_at=now - timedelta(hours=1)))
+
+        # 1. Ask completed work in public channel
+        ctx_pub = ConversationContext(user_id="U_AKSHAT", channel_id="C_PUB", thread_ts="", channel_type="public")
+        q_pub = Question(text="What has Hemant completed?", context=ctx_pub, user_id="U_AKSHAT")
+        ans_pub = engine.ask(q_pub)
+
+        # 2. Ask completed work in DM
+        ctx_dm = ConversationContext(user_id="U_AKSHAT", channel_id="D_AKSHAT", thread_ts="", channel_type="im")
+        q_dm = Question(text="What has Hemant completed?", context=ctx_dm, user_id="U_AKSHAT")
+        ans_dm = engine.ask(q_dm)
+
+        assert ans_pub is not None and ans_dm is not None
+        assert "API integration" in ans_pub.text
+        assert "API integration" in ans_dm.text
+        assert "**Recently Completed**" in ans_pub.text
+        assert "**Recently Completed**" in ans_dm.text

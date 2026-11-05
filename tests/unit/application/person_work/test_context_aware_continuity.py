@@ -400,7 +400,8 @@ class TestContextAwareContinuity:
         User asks: 'What has Hemant completed this week?'
 
         Requirement: POLIS honestly states that no confirmed completed tasks were found,
-        and notes conversationally that the active work appears to be ongoing.
+        does not mention active work as ongoing context or completed, and does not
+        present unverified work as completed.
         """
         now = datetime.now(timezone.utc)
         comm_repo.save(
@@ -419,6 +420,10 @@ class TestContextAwareContinuity:
             query_text="What has Hemant completed this week?",
         )
 
+        assert len(summary.completed_work) == 0
         resp = summary.formatted_response
         assert "no confirmed completed tasks" in resp.lower()
-        assert "ongoing" in resp.lower()
+        assert "ongoing" not in resp.lower()
+        assert "email otp" not in resp.lower()
+        assert "verification flow" not in resp.lower()
+        assert "**Recently Completed**" not in resp
