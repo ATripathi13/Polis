@@ -29,6 +29,18 @@ def test_find_employee_exact_and_partial():
     assert emp_akshat.full_name == "Akshat Tripathi"
 
 
+def test_employee_lookup_ignores_trailing_question_mark():
+    service = TeamDirectoryService()
+
+    candidate = service._extract_name_candidate("Hemant?")
+    assert candidate == "Hemant"
+
+    answer = service.answer_directory_query("Hemant?")
+
+    assert "Hemant Kumar Sah" in answer
+    assert "couldn't find an employee" not in answer
+
+
 def test_find_employee_ambiguous_returns_clarification():
     # Setup directory with multiple "Vijay"
     provider = InternalEmployeeDirectoryProvider(
@@ -110,3 +122,60 @@ def test_answer_responsibility_reverse_lookup():
     assert "Hemant Kumar Sah" in answer
     assert "Full Stack Engineer" in answer
     assert "Marketing Automation" in answer or "Workflow automations" in answer
+
+
+def test_current_work_formats_extracted_items_without_internal_metadata():
+    from application.person_work.person_work_service import (
+        ExtractedWorkItem,
+        WorkActivityType,
+        PersonWorkSummary,
+    )
+
+    work_item = ExtractedWorkItem(
+        work_item="Working on the IVAN video",
+        activity_type=WorkActivityType.ACTIVE_WORK,
+        status="in_progress",
+        latest_update="Reached the Gemini usage limit",
+        timestamp=datetime(2026, 11, 5, 10, 0),
+        source_channel="D123456",
+        source_ts="1234567890.123",
+        person_id="U123456",
+        person_name="Gurkirat Singh",
+        evidence="Internal Slack evidence",
+        confidence=0.95,
+        project="IVAN",
+    )
+
+    summary = PersonWorkSummary(
+        person_id="U123456",
+        person_name="Gurkirat Singh",
+        active_work=[work_item],
+    )
+
+    mock_person_work = MagicMock()
+    mock_person_work.get_person_work_summary.return_value = summary
+
+    service = TeamDirectoryService(person_work_service=mock_person_work)
+    result = service.get_active_work_items(
+        EmployeeProfile(
+            employee_id="EMP-TEST",
+            full_name="Gurkirat Singh",
+            role="Operations Specialist",
+            slack_user_id="U123456",
+        )
+    )
+
+    assert result == [
+        "Working on the IVAN video (In Progress; Project: IVAN)"
+    ]
+
+    rendered = " ".join(result)
+    for internal_value in (
+        "U123456",
+        "1234567890.123",
+        "Internal Slack evidence",
+        "0.95",
+        "ExtractedWorkItem",
+        "ACTIVE_WORK",
+    ):
+        assert internal_value not in rendered

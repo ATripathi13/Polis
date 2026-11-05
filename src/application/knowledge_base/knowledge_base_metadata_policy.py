@@ -9,6 +9,30 @@ class KnowledgeBaseMetadataPolicy:
     """
 
     _SOURCE_METADATA: dict[str, dict[str, str]] = {
+        "polis_hemant_kumar_sah_knowledge_base.md": {
+            "knowledge_type": "employee_profile",
+            "scope": "organization",
+            "authority": "current_employee_profile",
+            "source_type": "internal",
+        },
+        "polis_vijay_sharma_knowledge_base.md": {
+            "knowledge_type": "employee_profile",
+            "scope": "organization",
+            "authority": "current_employee_profile",
+            "source_type": "internal",
+        },
+        "polis_akshat_tripathi_knowledge_base.md": {
+            "knowledge_type": "employee_profile",
+            "scope": "organization",
+            "authority": "current_employee_profile",
+            "source_type": "internal",
+        },
+        "polis_gurkirat_singh_knowledge_base.md": {
+            "knowledge_type": "employee_profile",
+            "scope": "organization",
+            "authority": "current_employee_profile",
+            "source_type": "internal",
+        },
         "01_nav_thethi_profile.md": {
             "knowledge_type": "leadership_profile",
             "scope": "organization",

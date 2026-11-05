@@ -144,6 +144,7 @@ class SlackClient:
         payload = {
             "channel": channel,
             "text": text,
+            "mrkdwn": True,
         }
 
         if thread_ts:

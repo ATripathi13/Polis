@@ -19,6 +19,30 @@ class SlackResponder:
 
         self._client = client
 
+    @staticmethod
+    def _format_for_slack(text: str) -> str:
+        """Convert supported Markdown formatting to Slack mrkdwn."""
+        import re
+
+        # Protect inline and fenced code from formatting transformations.
+        code_pattern = re.compile(r"(```[\s\S]*?```|`[^`]*`)")
+        parts = code_pattern.split(text)
+
+        for index in range(0, len(parts), 2):
+            segment = parts[index]
+
+            segment = re.sub(
+                r"\[([^\]]+)\]\((https?://[^)\s]+)\)",
+                r"<\2|\1>",
+                segment,
+            )
+            segment = re.sub(r"\*\*(.+?)\*\*", r"*\1*", segment)
+            segment = re.sub(r"~~(.+?)~~", r"~\1~", segment)
+
+            parts[index] = segment
+
+        return "".join(parts)
+
     def reply(
         self,
         channel: str,
@@ -26,11 +50,11 @@ class SlackResponder:
         text: str,
     ) -> None:
         """
-        Reply inside the same Slack thread.
+        Reply inside the same Slack thread using Slack-compatible formatting.
         """
         self._client.post_message(
             channel=channel,
-            text=text,
+            text=self._format_for_slack(text),
             thread_ts=thread_ts,
         )
 

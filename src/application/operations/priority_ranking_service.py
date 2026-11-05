@@ -31,6 +31,7 @@ Source: Provider and original item link
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -202,8 +203,48 @@ class PriorityRankingService:
 
     def answer_priority_query(self, query: str) -> str:
         """
-        Produce a standardized, evidence-backed answer for team priority questions.
+        Answer single-priority and top-N team priority questions.
         """
+        count_match = re.search(r"\btop\s+(\d+)\b", query, re.IGNORECASE)
+
+        if count_match:
+            requested_count = min(max(int(count_match.group(1)), 1), 20)
+            ranked = self.rank_work_items(overarching_focus=True)
+            active = [
+                item for item in ranked
+                if item.item.status not in ("completed", "closed", "cancelled")
+            ][:requested_count]
+
+            if not active:
+                return (
+                    "**Active Team Priorities:** No active tasks currently recorded\n\n"
+                    "**Status:** Backlog empty or all recorded items completed"
+                )
+
+            sections = [f"**Top {len(active)} Active Team Priorities:**"]
+            for index, ranked_item in enumerate(active, 1):
+                item = ranked_item.item
+                deadline = (
+                    item.deadline.strftime("%b %d, %Y")
+                    if item.deadline else "Not explicitly set"
+                )
+                owner = item.owner_name or item.owner_id or "Unassigned"
+                project = item.project_name or item.project_id or "Not specified"
+                if item.sprint_name:
+                    project = f"{project} / {item.sprint_name}"
+
+                sections.append(
+                    f"**{index}. {item.title}**\n"
+                    f"**Status:** {item.source_status}\n"
+                    f"**Priority:** {item.source_priority}\n"
+                    f"**Owner:** {owner}\n"
+                    f"**Project / Sprint:** {project}\n"
+                    f"**Deadline:** {deadline}\n"
+                    f"**Reason for Ranking:** {' • '.join(ranked_item.reasons)}"
+                )
+
+            return "\n\n".join(sections)
+
         highest = self.get_highest_ranking_in_progress_task()
         if not highest:
             return (
@@ -220,8 +261,7 @@ class PriorityRankingService:
         item = highest.item
         deadline_str = (
             item.deadline.strftime("%b %d, %Y")
-            if item.deadline
-            else "Not explicitly set"
+            if item.deadline else "Not explicitly set"
         )
         owner_str = item.owner_name or item.owner_id or "Unassigned"
         proj_sprint = item.project_name or item.project_id
@@ -231,7 +271,7 @@ class PriorityRankingService:
         reason_text = " • ".join(highest.reasons)
         source_link = item.url or f"{item.source_provider} (ID: {item.item_id})"
 
-        output: list[str] = [
+        output = [
             f"**Highest Priority Team Task:** {item.title}",
             f"**Status:** {item.source_status}",
             f"**Priority:** {item.source_priority}",
@@ -241,5 +281,4 @@ class PriorityRankingService:
             f"**Reason for Ranking:** {reason_text}",
             f"**Source:** {source_link}",
         ]
-
         return "\n\n".join(output)

@@ -38,15 +38,9 @@ class OperationalItemProjectProvider(ProjectManagementProvider):
         ]
 
     def get_active_sprints(self, project_id: str | None = None) -> list[Sprint]:
-        return [
-            Sprint(
-                sprint_id="current_sprint",
-                name="Current Active Sprint",
-                project_id="polis_core_ops",
-                status="active",
-                goal="Core Team Initiatives & Hardening",
-            )
-        ]
+        # Operational items have no native sprint association.
+        # Do not invent an active sprint for internal records.
+        return []
 
     def get_work_items(
         self,
@@ -57,7 +51,7 @@ class OperationalItemProjectProvider(ProjectManagementProvider):
             return []
 
         try:
-            items = self._repo.find_all()
+            items = self._repo.find_open()
         except Exception as exc:
             logger.warning("Error fetching operational items: %s", exc)
             return []
@@ -70,14 +64,15 @@ class OperationalItemProjectProvider(ProjectManagementProvider):
             norm_prio = self._normalize_priority(op.priority)
 
             meta = dict(getattr(op, "metadata", {}) or {})
-            is_overarching = bool(
-                meta.get("is_overarching")
+            # Only explicit source metadata can identify an overarching initiative.
+            is_overarching = (
+                meta.get("is_overarching") is True
                 or meta.get("item_type") in ("initiative", "epic")
-                or getattr(op, "item_type", None) == OperationalItemType.DECISION
-                or "initiative" in op.summary.lower()
-                or "migration" in op.summary.lower()
-                or "redesign" in op.summary.lower()
-                or "automation" in op.summary.lower()
+            )
+            source_item_type = (
+                meta.get("item_type")
+                if meta.get("item_type") in ("initiative", "epic")
+                else op.item_type.value
             )
 
             # Blockers from metadata
@@ -91,7 +86,7 @@ class OperationalItemProjectProvider(ProjectManagementProvider):
                 WorkItem(
                     item_id=item_id,
                     title=op.summary,
-                    item_type="initiative" if is_overarching else "task",
+                    item_type="initiative" if is_overarching else source_item_type,
                     status=norm_status,
                     source_status=raw_status.title(),
                     priority=norm_prio,
@@ -100,8 +95,8 @@ class OperationalItemProjectProvider(ProjectManagementProvider):
                     owner_name=op.owner_name,
                     project_id="polis_core_ops",
                     project_name="POLIS Operations & Initiatives",
-                    sprint_id="current_sprint",
-                    sprint_name="Current Active Sprint",
+                    sprint_id=meta.get("sprint_id"),
+                    sprint_name=meta.get("sprint_name"),
                     deadline=op.due_at,
                     is_overarching=is_overarching,
                     dependencies=dependencies,

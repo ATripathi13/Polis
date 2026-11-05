@@ -165,3 +165,39 @@ def test_priority_ranking_answer_format():
     assert "**Deadline:** Nov 15, 2026" in answer
     assert "**Reason for Ranking:**" in answer
     assert "**Source:** https://jira.example.com/browse/PROJ-101" in answer
+
+
+def test_priority_ranking_top_five_active_items():
+    items = [
+        WorkItem(
+            item_id=f"TASK-{i}",
+            title=f"Active task {i}",
+            item_type="task",
+            status="in_progress" if i % 2 else "open",
+            source_status="In Progress" if i % 2 else "Open",
+            priority="high" if i == 1 else "medium",
+            source_priority="High" if i == 1 else "Medium",
+            owner_name=f"Owner {i}",
+            is_overarching=False,
+        )
+        for i in range(1, 8)
+    ]
+    items.append(
+        WorkItem(
+            item_id="TASK-DONE",
+            title="Completed task",
+            item_type="task",
+            status="completed",
+            source_status="Completed",
+            priority="critical",
+            source_priority="Critical",
+            is_overarching=True,
+        )
+    )
+
+    service = PriorityRankingService(providers=[FakeProjectProvider(items)])
+    answer = service.answer_priority_query("What are the top 5 active priorities?")
+
+    assert "**Top 5 Active Team Priorities:**" in answer
+    assert answer.count("**Status:**") == 5
+    assert "Completed task" not in answer

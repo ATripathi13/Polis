@@ -191,7 +191,38 @@ class TeamDirectoryService:
                 if summary:
                     active = getattr(summary, "active_work", [])
                     if active:
-                        return [str(a) for a in active[:3]]
+                        formatted_items = []
+                        for item in active[:3]:
+                            if isinstance(item, dict):
+                                description = item.get("work_item") or item.get("summary")
+                                status = item.get("status")
+                                project = item.get("project")
+                                deadline = item.get("deadline")
+                            else:
+                                description = getattr(item, "work_item", None)
+                                status = getattr(item, "status", None)
+                                project = getattr(item, "project", None)
+                                deadline = getattr(item, "deadline", None)
+
+                            if not description or not isinstance(description, str):
+                                continue
+
+                            details = []
+                            if status:
+                                details.append(str(status).replace("_", " ").title())
+                            if project:
+                                details.append(f"Project: {project}")
+                            if deadline:
+                                details.append(f"Deadline: {deadline}")
+
+                            formatted = description.strip()
+                            if details:
+                                formatted += f" ({'; '.join(details)})"
+
+                            formatted_items.append(formatted)
+
+                        if formatted_items:
+                            return formatted_items
             except Exception as exc:
                 logger.warning("Error fetching active work for %s: %s", employee.full_name, exc)
         return []
@@ -309,9 +340,9 @@ class TeamDirectoryService:
         if for_match:
             return for_match.group(1).strip()
 
-        # Match simple words
+        # Match simple words and remove surrounding punctuation.
         words = cleaned.split()
         if words:
-            return words[0].strip()
+            return re.sub(r"^[^\w]+|[^\w]+$", "", words[0]).strip()
 
-        return cleaned.strip()
+        return re.sub(r"^[^\w]+|[^\w]+$", "", cleaned).strip()

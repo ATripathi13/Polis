@@ -54,3 +54,22 @@ def test_returns_independent_metadata_copy():
     )
 
     assert second["knowledge_type"] == "framework"
+
+
+def test_classifies_all_employee_profile_sources():
+    filenames = [
+        "POLIS_Hemant_Kumar_Sah_Knowledge_Base.md",
+        "POLIS_Vijay_Sharma_Knowledge_Base.md",
+        "POLIS_Akshat_Tripathi_Knowledge_Base.md",
+        "POLIS_Gurkirat_Singh_Knowledge_Base.md",
+    ]
+
+    expected = {
+        "knowledge_type": "employee_profile",
+        "scope": "organization",
+        "authority": "current_employee_profile",
+        "source_type": "internal",
+    }
+
+    for filename in filenames:
+        assert KnowledgeBaseMetadataPolicy.classify(filename) == expected
